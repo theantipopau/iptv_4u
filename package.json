@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "pages:dev": "wrangler pages dev public --compatibility-date=2026-01-01 --kv EPG_CACHE"
+    "worker:dev": "wrangler dev"
   },
   "dependencies": {
     "express": "^4.21.2",

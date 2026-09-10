@@ -29,21 +29,21 @@ shared/core.js           pure functions: M3U/XMLTV parsing & building,
 shared/fetch-utils.js     fetch-with-timeout, gzip decompression
                          (Web-standard DecompressionStream — works
                          identically in Node and Workers), concurrency
-shared/epg-service.js     orchestration: every /api/* route body, taking
-                         a pluggable cache adapter
+shared/epg-service.js     orchestration: every route's actual logic,
+                         taking a pluggable cache adapter
 shared/node-cache.js      filesystem cache adapter (local/self-hosted)
-functions/_lib/kv-cache.js  Cloudflare KV cache adapter
-server.js                thin Express wrapper around shared/ — `npm start`
-functions/api/*.js        thin Cloudflare Pages Functions wrapper around
-                         the same shared/ code
-functions/iptv/[[path]].js  serves a published playlist: /iptv/<slug>.m3u
-functions/epg/[[path]].js   serves a published guide: /epg/<slug>.xml
+shared/kv-cache.js        Cloudflare KV cache adapter (same {get,
+                         getStale, set} shape as the Node one)
+server.js                Express app for `npm start` (local/self-hosted)
+worker.js                 Cloudflare Worker entry point — one fetch
+                         handler routing /api/*, /iptv/*.m3u, /epg/*.xml,
+                         falling back to static assets for everything else
 public/                  static frontend — identical against either backend
 ```
 
-Both backends expose the exact same `/api/*` routes and the same `shared/` logic — the frontend in `public/` doesn't know or care which one it's talking to, and a matching-logic fix only needs to land in one place.
+Both entry points expose the exact same routes and call the same `shared/` logic — the frontend in `public/` doesn't know or care which one it's talking to, and a matching-logic fix only needs to land in one place.
 
-**Why two backends?** Cloudflare Pages Functions run in a serverless edge sandbox with no filesystem, so the disk-based EPG cache (`.epg-cache/`) doesn't work there — `functions/_lib/kv-cache.js` is the same `{get, getStale, set}` adapter shape backed by Cloudflare KV instead. Everything else is shared.
+**Why two entry points, and why a single `worker.js`?** Cloudflare's "Connect to Git" flow (as of when this was built, Sep 2026) creates a unified **Worker with static assets**, not a classic Pages project — which means the old per-file `functions/api/*.js` routing convention doesn't apply here at all; it needs one `main` script declared in `wrangler.toml` that handles routing itself and falls back to `env.ASSETS.fetch()` for static files. (An earlier version of this project shipped a `functions/` directory expecting classic Pages Functions auto-detection — it silently never got wired up; static assets served fine while every `/api/*` route 404'd, since only the assets half of the deploy was actually happening. `worker.js` fixes that.) Locally, none of this matters — `server.js`/Express has no filesystem restrictions, so it just uses the disk cache directly.
 
 ## Quick start (local)
 
@@ -67,31 +67,30 @@ Point TiViMate (or any player that takes a playlist/EPG URL) at those, and re-pu
 
 > **These URLs are public and unauthenticated.** Anyone who knows the exact slug can fetch your playlist and channel stream URLs. Pick a slug that isn't trivially guessable if your provider embeds private access tokens in the stream URLs (many IPTV services do) — treat the link like a password, not a username.
 
-Publishing needs somewhere to persist the files: locally that's `.hosted-files/` on disk; on Cloudflare it's the `HOSTED_FILES` KV binding (step 4 below).
+Publishing needs somewhere to persist the files: locally that's `.hosted-files/` on disk; on Cloudflare it's the `HOSTED_FILES` KV namespace (below).
 
-## Deploying to Cloudflare Pages
+## Deploying to Cloudflare
 
-All dashboard-based — no API token needed from me or you to hand over.
+Dashboard for the KV namespace IDs and the TMDB secret; `wrangler.toml` for everything else. No API token needs to change hands for this.
 
 1. **Push this repo to GitHub** (or GitLab).
-2. **Workers & Pages → Create → Pages → Connect to Git** → pick the repo.
-3. Build settings: **Build command** — leave blank (there's nothing to build, it's plain static files + Functions). **Build output directory** — `public`.
-4. **Workers & Pages → KV → Create namespace**, twice: one for the EPG cache (e.g. `iptv4u-epg-cache`), one for published files (e.g. `iptv4u-hosted-files`).
-5. On the Pages project: **Settings → Functions → KV namespace bindings** — add two bindings, named *exactly*:
-   - `EPG_CACHE` → the first namespace
-   - `HOSTED_FILES` → the second namespace
-6. **Settings → Environment variables** → add `TMDB_API_KEY` (optional, see below) as a secret.
-7. Deploy, then **Custom domains** tab on the Pages project → add your subdomain (e.g. `iptv4u.matthurley.dev`) — Cloudflare wires the DNS record automatically since the domain's already on your account.
+2. **Workers & Pages → Create → Import a repository** (or **Connect to Git**) → pick the repo. Cloudflare will build it as a **Worker with static assets**, using `worker.js` as the entry point and `public/` as the asset directory — both declared in `wrangler.toml`, so the build settings fields (build/deploy command) can stay blank.
+3. **Workers & Pages → KV → Create namespace**, twice: one for the EPG cache (e.g. `iptv4u-epg-cache`), one for published files (e.g. `iptv4u-hosted-files`). Open each namespace and copy its **id**.
+4. Edit `wrangler.toml` in the repo, replacing the two placeholder KV ids with the real ones from step 3, then push. (This is the one piece of "config as code" here — the Git-connected build reads bindings from this file, not from a dashboard form.)
+5. On the Worker's settings: **Variables and secrets** → add `TMDB_API_KEY` (optional, see below) as a secret.
+6. **Settings → Domains & Routes** → add your custom domain (e.g. `iptv4u.matthurley.dev`) — Cloudflare wires the DNS record automatically since the domain's already on your account.
 
-### Troubleshooting: "Missing entry-point to Worker script"
+### Troubleshooting
 
-If a build fails with wrangler complaining about a missing entry-point / `wrangler deploy` instead of `wrangler pages deploy` — that means a `wrangler.toml` (or `wrangler.jsonc`) exists at the repo root. Its presence switches Cloudflare's Git-connected build off the normal static-Pages-plus-Functions flow and onto a generic Workers deploy, which this project isn't set up for. This repo intentionally has **no** `wrangler.toml` for that reason; if you add one back (e.g. for local `wrangler pages dev`), expect to also need to explicitly set the project's **Deploy command** in dashboard settings to override the auto-detected one.
+- **Every `/api/*` route 404s, but the site itself loads fine.** This is what happens if `worker.js` isn't actually being deployed as the Worker's script — e.g. `wrangler.toml` is missing, or its `main`/`[assets]` fields got reverted. Only the static half of the deploy runs in that case, which serves `/` and `/app.js` correctly but leaves nothing to handle `/api/*`, `/iptv/*`, or `/epg/*` — that's the exact symptom that showed up in production once (see commit history) before `worker.js` existed and this project mistakenly shipped a classic-Pages-style `functions/` directory instead, which this resource type never auto-detects.
+- **"Missing entry-point to Worker script" during build.** `wrangler.toml` is missing `main`, or points at a file that doesn't exist. Confirm it's set to `main = "worker.js"`.
+- **KV reads/writes silently do nothing.** The `id` fields in `wrangler.toml` are still the `REPLACE_WITH_...` placeholders — swap them for the real namespace ids (step 3/4 above).
 
 ## Optional: 24/7 channel art via TMDB
 
 1. Get a free "API Key (v3 auth)" from your account settings at https://www.themoviedb.org/settings/api
 2. **Local**: copy `.env.example` to `.env`, set `TMDB_API_KEY=...`, restart the server.
-3. **Cloudflare Pages**: add `TMDB_API_KEY` under Settings → Environment variables.
+3. **Cloudflare**: add `TMDB_API_KEY` under the Worker's Settings → Variables and secrets.
 
 Without a key, 24/7 channels are still detected and flagged in the UI — they just won't get automatic poster art, and you can still search/link them manually. Many well-known 24/7/FAST channels (a real "Bluey" or Pluto TV channel, for instance) already resolve for free from `iptv-org`'s own catalog without needing TMDB at all — TMDB is the fallback for channels nobody's indexed.
 

@@ -1,0 +1,21 @@
+name = "iptv-4u"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Serves public/ as static assets, exposed inside worker.js as env.ASSETS.
+[assets]
+directory = "public"
+binding = "ASSETS"
+
+# Create these two KV namespaces in the dashboard (Workers & Pages > KV),
+# then replace the placeholder ids below with the real namespace ids shown
+# on each namespace's detail page. This file is what the Git-connected
+# build actually reads to wire up bindings for this Worker — dashboard
+# "Variables and secrets" is for env vars like TMDB_API_KEY, not these.
+[[kv_namespaces]]
+binding = "EPG_CACHE"
+id = "REPLACE_WITH_EPG_CACHE_NAMESPACE_ID"
+
+[[kv_namespaces]]
+binding = "HOSTED_FILES"
+id = "REPLACE_WITH_HOSTED_FILES_NAMESPACE_ID"
