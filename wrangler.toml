@@ -7,15 +7,14 @@ compatibility_date = "2026-01-01"
 directory = "public"
 binding = "ASSETS"
 
-# Create these two KV namespaces in the dashboard (Workers & Pages > KV),
-# then replace the placeholder ids below with the real namespace ids shown
-# on each namespace's detail page. This file is what the Git-connected
-# build actually reads to wire up bindings for this Worker — dashboard
-# "Variables and secrets" is for env vars like TMDB_API_KEY, not these.
+# iptv4u-epg-cache / iptv4u-hosted-files namespaces (Workers & Pages > KV).
+# This file is what the Git-connected build reads to wire up bindings for
+# this Worker — dashboard "Variables and secrets" is for env vars like
+# TMDB_API_KEY, not these.
 [[kv_namespaces]]
 binding = "EPG_CACHE"
-id = "REPLACE_WITH_EPG_CACHE_NAMESPACE_ID"
+id = "75a22b4f4943419aab48a722501ba0e8"
 
 [[kv_namespaces]]
 binding = "HOSTED_FILES"
-id = "REPLACE_WITH_HOSTED_FILES_NAMESPACE_ID"
+id = "77c0da6744d646e38a775e439588cdbc"
