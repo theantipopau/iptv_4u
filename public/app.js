@@ -40,7 +40,15 @@ const el = {
   tableCount: document.getElementById('tableCount'),
   progressTrack: document.getElementById('progressTrack'),
   progressFill: document.getElementById('progressFill'),
-  toastStack: document.getElementById('toastStack')
+  toastStack: document.getElementById('toastStack'),
+  publishSlug: document.getElementById('publishSlug'),
+  publishBtn: document.getElementById('publishBtn'),
+  publishStatus: document.getElementById('publishStatus'),
+  publishResult: document.getElementById('publishResult'),
+  publishM3uUrl: document.getElementById('publishM3uUrl'),
+  publishXmlUrl: document.getElementById('publishXmlUrl'),
+  copyM3uUrlBtn: document.getElementById('copyM3uUrlBtn'),
+  copyXmlUrlBtn: document.getElementById('copyXmlUrlBtn')
 };
 
 // ---- toasts ----------------------------------------------------------
@@ -486,12 +494,7 @@ function downloadFile(name, content, type) {
   URL.revokeObjectURL(url);
 }
 
-async function exportM3U() {
-  if (!state.m3uChannels.length) {
-    toast('Load files first.', 'error');
-    return;
-  }
-
+async function buildFinalM3U() {
   const links = Array.from(state.links.values());
   const result = await api('/api/export-m3u', {
     method: 'POST',
@@ -500,18 +503,21 @@ async function exportM3U() {
       links
     })
   });
-
-  downloadFile('updated_playlist.m3u', result.m3u, 'audio/x-mpegurl');
-  toast('Downloaded updated_playlist.m3u', 'success');
+  return result.m3u;
 }
 
-async function exportXML() {
-  if (!state.xmlText) {
+async function exportM3U() {
+  if (!state.m3uChannels.length) {
     toast('Load files first.', 'error');
     return;
   }
 
-  el.exportXMLBtn.disabled = true;
+  const m3u = await buildFinalM3U();
+  downloadFile('updated_playlist.m3u', m3u, 'audio/x-mpegurl');
+  toast('Downloaded updated_playlist.m3u', 'success');
+}
+
+async function buildFinalXML() {
   let merged = state.xmlText;
   let mergedCount = 0;
   let errorCount = 0;
@@ -559,10 +565,69 @@ async function exportXML() {
 
   state.xmlText = merged;
   el.mergeStatus.textContent = `XML update complete. Applied ${mergedCount} linked channel(s)${errorCount ? `, ${errorCount} failed` : ''}.`;
-  el.exportXMLBtn.disabled = false;
   autosave();
+  return merged;
+}
+
+async function exportXML() {
+  if (!state.xmlText) {
+    toast('Load files first.', 'error');
+    return;
+  }
+
+  el.exportXMLBtn.disabled = true;
+  const merged = await buildFinalXML();
+  el.exportXMLBtn.disabled = false;
+
   downloadFile('updated_guide.xml', merged, 'application/xml');
   toast('Downloaded updated_guide.xml', 'success');
+}
+
+// ---- publish (hosted M3U/XML for IPTV player apps) -----------------------
+
+async function publishHosted() {
+  if (!state.m3uChannels.length) {
+    toast('Load files first.', 'error');
+    return;
+  }
+
+  const slug = el.publishSlug.value.trim();
+  if (!slug) {
+    toast('Enter a URL slug (e.g. "matt") first.', 'error');
+    return;
+  }
+
+  el.publishBtn.disabled = true;
+  el.publishStatus.innerHTML = '<span class="spinner"></span>Building and publishing…';
+
+  try {
+    const [m3u, xml] = await Promise.all([buildFinalM3U(), buildFinalXML()]);
+    const result = await api('/api/publish', {
+      method: 'POST',
+      body: JSON.stringify({ slug, m3uContent: m3u, xmlContent: xml })
+    });
+
+    const m3uUrl = `${location.origin}/iptv/${result.slug}.m3u`;
+    const xmlUrl = `${location.origin}/epg/${result.slug}.xml`;
+
+    el.publishResult.hidden = false;
+    el.publishM3uUrl.value = m3uUrl;
+    el.publishXmlUrl.value = xmlUrl;
+    el.publishStatus.textContent = 'Published. Point your IPTV app at these URLs:';
+    autosave();
+    toast('Published.', 'success');
+  } catch (error) {
+    el.publishStatus.textContent = '';
+    toast(error.message, 'error');
+  } finally {
+    el.publishBtn.disabled = false;
+  }
+}
+
+function copyToClipboard(value) {
+  navigator.clipboard?.writeText(value)
+    .then(() => toast('Copied to clipboard.', 'success'))
+    .catch(() => toast('Could not copy — select and copy manually.', 'error'));
 }
 
 // ---- project save/load --------------------------------------------------
@@ -657,6 +722,16 @@ el.exportXMLBtn.addEventListener('click', () => {
     toast(error.message, 'error');
   });
 });
+
+el.publishBtn.addEventListener('click', () => {
+  publishHosted().catch((error) => {
+    console.error(error);
+    toast(error.message, 'error');
+  });
+});
+
+el.copyM3uUrlBtn.addEventListener('click', () => copyToClipboard(el.publishM3uUrl.value));
+el.copyXmlUrlBtn.addEventListener('click', () => copyToClipboard(el.publishXmlUrl.value));
 
 el.saveProjectBtn.addEventListener('click', () => {
   saveProjectFile();

@@ -491,4 +491,42 @@ export async function exportM3u({ channels, links }) {
   return { m3u: serializeM3U(updated) };
 }
 
+// ---- publishing (hosted M3U/XML for IPTV player apps) --------------------
+//
+// Lets a finished playlist/guide be saved to a stable URL — /iptv/<slug>.m3u
+// and /epg/<slug>.xml — that a player app (TiViMate, etc.) can point at
+// directly instead of re-exporting and re-uploading by hand every time.
+// Uses the same cache-adapter interface as the EPG cache, just pointed at a
+// separate store/namespace so published content isn't subject to the EPG
+// cache's freshness/eviction behavior.
+
+const MAX_PUBLISHED_CONTENT_LENGTH = 15 * 1024 * 1024; // 15MB per file
+
+export async function publishFiles(store, slugInput, { m3uContent, xmlContent }) {
+  const slug = slugify(slugInput);
+  if (!slug) {
+    throw new Error('A valid slug is required (letters, numbers, dashes).');
+  }
+  if (!m3uContent && !xmlContent) {
+    throw new Error('Nothing to publish — provide m3uContent and/or xmlContent.');
+  }
+  if ((m3uContent && m3uContent.length > MAX_PUBLISHED_CONTENT_LENGTH) ||
+      (xmlContent && xmlContent.length > MAX_PUBLISHED_CONTENT_LENGTH)) {
+    throw new Error('File too large to publish (15MB limit per file).');
+  }
+
+  if (m3uContent) await store.set(`hosted:${slug}:m3u`, m3uContent);
+  if (xmlContent) await store.set(`hosted:${slug}:xml`, xmlContent);
+
+  return { slug };
+}
+
+export async function getHostedFile(store, slugInput, kind) {
+  const slug = slugify(slugInput);
+  if (!slug) return null;
+  // Published content has no freshness window of its own — it's live
+  // until explicitly republished — so always read via getStale.
+  return store.getStale(`hosted:${slug}:${kind}`);
+}
+
 export { slugify };

@@ -102,7 +102,37 @@
       </section>
 
       <section class="card export-card">
-        <h2><span class="step-num">5</span> Project</h2>
+        <h2><span class="step-num">5</span> Publish (Hosted URLs)</h2>
+        <p class="small">Publish a stable URL that IPTV player apps (TiViMate, etc.) can point at directly, instead of re-uploading a file every time.</p>
+        <div class="controls-grid">
+          <label>
+            <span>URL slug</span>
+            <input id="publishSlug" type="text" placeholder="matt" />
+          </label>
+          <button id="publishBtn" class="btn primary">Publish to Hosted URLs</button>
+        </div>
+        <p class="small publish-warning">⚠️ These URLs are public and unauthenticated — anyone with the link can access your playlist. If your stream URLs contain private tokens, treat the link like a password.</p>
+        <div id="publishStatus" class="inline-status"></div>
+        <div id="publishResult" class="publish-result" hidden>
+          <label>
+            <span>Playlist URL</span>
+            <div class="url-row">
+              <input id="publishM3uUrl" type="text" readonly />
+              <button id="copyM3uUrlBtn" class="btn" type="button">Copy</button>
+            </div>
+          </label>
+          <label>
+            <span>EPG URL</span>
+            <div class="url-row">
+              <input id="publishXmlUrl" type="text" readonly />
+              <button id="copyXmlUrlBtn" class="btn" type="button">Copy</button>
+            </div>
+          </label>
+        </div>
+      </section>
+
+      <section class="card export-card">
+        <h2><span class="step-num">6</span> Project</h2>
         <div class="controls-grid">
           <button id="saveProjectBtn" class="btn">Save Project File</button>
           <label>

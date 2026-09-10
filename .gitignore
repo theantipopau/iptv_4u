@@ -1,4 +1,5 @@
 node_modules/
 .epg-cache/
+.hosted-files/
 .env
 .wrangler/

@@ -8,7 +8,9 @@ import {
   searchChannel,
   mergeGuide,
   applyIdentity,
-  exportM3u
+  exportM3u,
+  publishFiles,
+  getHostedFile
 } from './shared/epg-service.js';
 import { createNodeCache } from './shared/node-cache.js';
 
@@ -39,6 +41,7 @@ const TMDB_API_KEY = process.env.TMDB_API_KEY || '';
 const PORT = process.env.PORT || 3000;
 
 const cache = createNodeCache(path.join(__dirname, '.epg-cache'));
+const hostedStore = createNodeCache(path.join(__dirname, '.hosted-files'));
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
@@ -70,6 +73,20 @@ app.post('/api/merge-guide', handle(async (req) => mergeGuide(req.body)));
 app.post('/api/apply-identity', handle(async (req) => applyIdentity(req.body)));
 
 app.post('/api/export-m3u', handle(async (req) => exportM3u(req.body)));
+
+app.post('/api/publish', handle(async (req) => publishFiles(hostedStore, req.body.slug, req.body)));
+
+app.get('/iptv/:slug.m3u', async (req, res) => {
+  const content = await getHostedFile(hostedStore, req.params.slug, 'm3u');
+  if (!content) return res.status(404).type('text/plain').send('Not found. Publish this playlist first.');
+  res.type('audio/x-mpegurl').send(content);
+});
+
+app.get('/epg/:slug.xml', async (req, res) => {
+  const content = await getHostedFile(hostedStore, req.params.slug, 'xml');
+  if (!content) return res.status(404).type('text/plain').send('Not found. Publish this guide first.');
+  res.type('application/xml').send(content);
+});
 
 app.listen(PORT, () => {
   console.log(`IPTV 4U running on http://localhost:${PORT}`);

@@ -466,6 +466,31 @@ dialog::backdrop {
   transition: width 0.25s ease;
 }
 
+.publish-warning {
+  color: #a15b00;
+  background: #fdf1dc;
+  border: 1px solid #f0cd8f;
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.7rem;
+  max-width: 640px;
+}
+
+.publish-result {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.url-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.url-row input {
+  flex: 1;
+  min-width: 0;
+}
+
 .toast-stack {
   position: fixed;
   right: 1rem;
