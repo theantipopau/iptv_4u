@@ -1,0 +1,18 @@
+{
+  "name": "iptv_4u",
+  "version": "1.0.0",
+  "description": "Local IPTV M3U/XML editor with online EPG matching",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "pages:dev": "wrangler pages dev public --compatibility-date=2026-01-01 --kv EPG_CACHE"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "fast-xml-parser": "^4.5.1"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

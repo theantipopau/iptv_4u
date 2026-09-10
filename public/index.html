@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IPTV 4U EPG Linker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="icon" type="image/png" href="/assets/logo.png" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero">
+        <div class="hero-left">
+          <img class="hero-logo" src="/assets/logo.png" alt="IPTV 4U logo" width="64" height="64" />
+          <div>
+            <p class="eyebrow">IPTV 4U</p>
+            <h1>M3U + XMLTV EPG Linker</h1>
+            <p class="subtitle">Load a playlist, auto-find online EPG + logo matches, detect 24/7 channels, merge selected guide data, and export updated outputs.</p>
+          </div>
+        </div>
+        <button id="themeToggle" class="theme-toggle" type="button" title="Toggle dark mode" aria-label="Toggle dark mode">🌓</button>
+      </section>
+
+      <div id="resumeBanner" class="banner" hidden>
+        <span>A previous session was found in this browser.</span>
+        <div class="banner-actions">
+          <button id="resumeBtn" class="btn primary">Resume</button>
+          <button id="discardBtn" class="btn">Discard</button>
+        </div>
+      </div>
+
+      <section class="card upload-card">
+        <h2><span class="step-num">1</span> Load Files</h2>
+        <div class="upload-grid">
+          <label>
+            <span>M3U Playlist (required)</span>
+            <input id="m3uFile" type="file" accept=".m3u,.txt" />
+          </label>
+          <label>
+            <span>XMLTV File (optional)</span>
+            <input id="xmlFile" type="file" accept=".xml,.xmltv" />
+          </label>
+          <button id="loadFilesBtn" class="btn primary">Parse Files</button>
+        </div>
+        <p class="small">No XMLTV file yet? Leave it blank — Parse Files will start a fresh guide you can build up from matches.</p>
+        <div id="summary" class="summary"></div>
+      </section>
+
+      <section class="card controls-card">
+        <h2><span class="step-num">2</span> Discover Online EPG Sources</h2>
+        <div class="controls-grid">
+          <button id="discoverBtn" class="btn">Discover IPTV-org Worker Sources</button>
+          <label>
+            <span>Max source scan per search</span>
+            <input id="maxSources" type="number" min="10" max="40" value="40" />
+          </label>
+          <div class="inline-status" id="sourceStatus">Not discovered yet</div>
+        </div>
+        <p id="tmdbStatus" class="small"></p>
+      </section>
+
+      <section class="card table-card">
+        <h2><span class="step-num">3</span> Link Channels</h2>
+        <div class="toolbar">
+          <button id="autoMatchBtn" class="btn primary">Auto-Match All Channels</button>
+          <span id="matchProgress" class="inline-status"></span>
+        </div>
+        <div class="progress-track" id="progressTrack" hidden>
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="table-toolbar">
+          <input id="channelFilter" type="search" placeholder="Filter channels by name, group, or link status…" />
+          <span id="tableCount" class="table-count"></span>
+        </div>
+        <div class="table-wrap">
+          <table id="channelsTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Logo</th>
+                <th>M3U Channel</th>
+                <th>Current `tvg-id`</th>
+                <th>Linked EPG</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card export-card">
+        <h2><span class="step-num">4</span> Export</h2>
+        <div class="controls-grid">
+          <button id="exportM3UBtn" class="btn">Download Updated M3U</button>
+          <button id="exportXMLBtn" class="btn primary">Download Updated XMLTV</button>
+          <div id="mergeStatus" class="inline-status"></div>
+        </div>
+      </section>
+
+      <section class="card export-card">
+        <h2><span class="step-num">5</span> Project</h2>
+        <div class="controls-grid">
+          <button id="saveProjectBtn" class="btn">Save Project File</button>
+          <label>
+            <span>Load Project File</span>
+            <input id="loadProjectFile" type="file" accept=".json" />
+          </label>
+        </div>
+        <p class="small">Progress also autosaves to this browser automatically.</p>
+      </section>
+    </main>
+
+    <dialog id="matchDialog">
+      <form method="dialog" class="dialog-content">
+        <h3>Choose EPG Match</h3>
+        <p id="dialogChannelName"></p>
+        <p id="dialogContext" class="small"></p>
+        <div id="matchList" class="match-list"></div>
+        <menu>
+          <button class="btn" value="cancel">Close</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

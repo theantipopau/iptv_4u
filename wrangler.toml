@@ -1,0 +1,13 @@
+name = "iptv-4u"
+compatibility_date = "2026-01-01"
+pages_build_output_dir = "public"
+
+# Create this KV namespace in the Cloudflare dashboard (Workers & Pages >
+# KV) or via `wrangler kv namespace create EPG_CACHE`, then either paste
+# its id below for local `wrangler pages dev`, or bind it under your Pages
+# project's Settings > Functions > KV namespace bindings (binding name
+# must be EPG_CACHE) — the dashboard binding is what actually matters for
+# the deployed site; this file mainly helps local dev.
+[[kv_namespaces]]
+binding = "EPG_CACHE"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
