@@ -20,6 +20,7 @@ const el = {
   sourceStatus: document.getElementById('sourceStatus'),
   tmdbStatus: document.getElementById('tmdbStatus'),
   maxSources: document.getElementById('maxSources'),
+  customGuideUrl: document.getElementById('customGuideUrl'),
   channelsTableBody: document.querySelector('#channelsTable tbody'),
   autoMatchBtn: document.getElementById('autoMatchBtn'),
   matchProgress: document.getElementById('matchProgress'),
@@ -170,7 +171,8 @@ function serializeState() {
     m3uChannels: state.m3uChannels,
     xmlSummary: state.xmlSummary,
     links: Array.from(state.links.entries()),
-    contexts: Array.from(state.contexts.entries())
+    contexts: Array.from(state.contexts.entries()),
+    customGuideUrl: el.customGuideUrl.value.trim()
   };
 }
 
@@ -182,6 +184,7 @@ function restoreState(data) {
   state.links = new Map(data.links || []);
   state.contexts = new Map(data.contexts || []);
   state.errors = new Map();
+  el.customGuideUrl.value = data.customGuideUrl || '';
 }
 
 function autosave() {
@@ -400,7 +403,8 @@ async function searchForChannel(channel) {
       channelName: channel.name,
       tvgId: channel.attrs?.['tvg-id'] || '',
       groupTitle: channel.attrs?.['group-title'] || '',
-      maxSources: Number(el.maxSources.value || 120)
+      maxSources: Number(el.maxSources.value || 120),
+      customGuideUrl: el.customGuideUrl.value.trim()
     })
   });
 
@@ -452,7 +456,8 @@ async function autoMatchAll() {
           channelName: channel.name,
           tvgId: channel.attrs?.['tvg-id'] || '',
           groupTitle: channel.attrs?.['group-title'] || '',
-          maxSources: Number(el.maxSources.value || 120)
+          maxSources: Number(el.maxSources.value || 120),
+          customGuideUrl: el.customGuideUrl.value.trim()
         })
       });
 

@@ -235,7 +235,7 @@ export async function parseFiles({ m3uContent, xmlContent }) {
   };
 }
 
-export async function searchChannel(cache, apiKey, { channelName, tvgId, groupTitle, maxSources }) {
+export async function searchChannel(cache, apiKey, { channelName, tvgId, groupTitle, maxSources, customGuideUrl }) {
   if (!channelName || !channelName.trim()) {
     throw new Error('channelName is required.');
   }
@@ -266,6 +266,14 @@ export async function searchChannel(cache, apiKey, { channelName, tvgId, groupTi
     return scoreSource(b) - scoreSource(a);
   });
   const sourceSlice = rankedSources.slice(0, requestedCount);
+
+  // A user-supplied EPG (their own provider's guide, say) is a known-good,
+  // exact-fit source for their own lineup — always scan it, on top of the
+  // scan-limited public sources, not instead of one of them.
+  if (customGuideUrl && customGuideUrl.trim()) {
+    const url = customGuideUrl.trim();
+    sourceSlice.unshift({ id: `custom:${url}`, name: 'Your EPG', host: 'custom', channelsUrl: url, guideUrl: url });
+  }
 
   const sourceMatchesNested = await runWithConcurrency(sourceSlice, 10, async (source) => {
     try {

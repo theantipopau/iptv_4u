@@ -151,16 +151,24 @@ export function normalizeWorkerUrl(baseUrl, value) {
 
 // ---- matching -------------------------------------------------------------
 
+function containsAsWholeWord(haystack, needle) {
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`).test(haystack);
+}
+
 export function scoreMatch(needle, haystack) {
   const a = (needle || '').toLowerCase().trim();
   const b = (haystack || '').toLowerCase().trim();
   if (!a || !b) return 0;
   if (a === b) return 1;
   // Containment is only a meaningful signal when the shorter side is a
-  // real chunk of the longer one — otherwise very short candidate names
-  // (e.g. "7", "Her") spuriously "match" as a substring of any long query.
-  if (a.length >= 4 && b.includes(a)) return Math.max(0.75, a.length / b.length);
-  if (b.length >= 4 && a.includes(b)) return Math.max(0.65, b.length / a.length);
+  // whole word/phrase inside the longer one, not just any substring —
+  // otherwise short titles like "Tron" or "Up" spuriously "match" any
+  // channel whose name merely contains those letters mid-word (e.g.
+  // "Tron" inside "Armstrong" or "Electron"). Very short candidate names
+  // (e.g. "7", "Her") are excluded outright regardless.
+  if (a.length >= 4 && containsAsWholeWord(b, a)) return Math.max(0.75, a.length / b.length);
+  if (b.length >= 4 && containsAsWholeWord(a, b)) return Math.max(0.65, b.length / a.length);
 
   const tokensA = new Set(a.split(/[^a-z0-9]+/).filter(Boolean));
   const tokensB = new Set(b.split(/[^a-z0-9]+/).filter(Boolean));

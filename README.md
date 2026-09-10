@@ -94,11 +94,16 @@ Dashboard for the KV namespace IDs and the TMDB secret; `wrangler.toml` for ever
 
 Without a key, 24/7 channels are still detected and flagged in the UI — they just won't get automatic poster art, and you can still search/link them manually. Many well-known 24/7/FAST channels (a real "Bluey" or Pluto TV channel, for instance) already resolve for free from `iptv-org`'s own catalog without needing TMDB at all — TMDB is the fallback for channels nobody's indexed.
 
+## Using your own IPTV provider's EPG
+
+Step 2 in the UI has a "Your own EPG/guide URL" field. If your provider gives you an XMLTV guide URL (many do, alongside the M3U), paste it there — it's fetched and matched alongside the public sources on every search/auto-match, no scan-limit applied to it since it's one explicit source, not part of the ~300-host public network. For a provider whose M3U already tags channels with a `tvg-id` that matches this guide's own channel `id`s (common — it's usually the same underlying dataset), this resolves real schedules for nearly every linear channel in one pass, which the sparse public worker network usually can't.
+
 ## How matching actually works
 
-- **Exact `tvg-id`**: if your M3U already carries a `tvg-id` that matches a known source's channel id, that's scored 1.0 and wins outright.
+- **Exact `tvg-id`**: if your M3U already carries a `tvg-id` that matches a known source's channel id (including your own custom guide, if you've set one), that's scored 1.0 and wins outright.
 - **Country hints**: pulled from bracketed/prefixed/suffixed country codes or full country names in the channel name/`group-title` (e.g. `(NZ)`, `UK:`, `Sky Sports NZ`), then used to boost same-country matches and penalize cross-country name collisions.
 - **24/7 detection**: a regex over `24/7`, `24-7`, `nonstop`, `marathon`, `all day`, `loop(ed)` in the name or group. Once flagged, matching switches to scoring against the *cleaned* title only (decoration stripped) — scoring against the raw name would let a channel literally named "24/7" win by substring containment against every other 24/7-flagged query, which is exactly the failure mode this avoids.
+- **Whole-word containment only**: a short cleaned title (e.g. "Tron") only counts as contained in a candidate name if it appears as a whole word — otherwise a channel named "Armstrong" or "Electron" would spuriously "match" any query containing "tron" as a mid-word substring.
 - **Confidence bar**: general matches need a score ≥0.45–0.48 depending on source; 24/7-flagged matches need ≥0.6, since a wrong identification (wrong poster, wrong logo) is worse than none.
 - **Source prioritization**: a single search can't scan every EPG worker source (there are ~300, and Cloudflare's free-plan subrequest limits cap this at 40 per request) — sources are ranked by whether their host name matches the channel's country hint or name tokens before slicing to the scan limit, so a niche source is more likely to actually get checked.
 

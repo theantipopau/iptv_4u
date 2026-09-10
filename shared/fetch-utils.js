@@ -13,7 +13,13 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
 }
 
 export async function fetchTextMaybeGzip(url, timeoutMs = 15000) {
-  const response = await fetchWithTimeout(url, { redirect: 'follow' }, timeoutMs);
+  // Ask the server not to transport-compress the response — we only want
+  // to decompress genuinely pre-compressed static .gz files below, not
+  // negotiate HTTP-level gzip. (That negotiated path, combined with
+  // chunked transfer-encoding, has been observed to crash Node's
+  // DecompressionStream outright — Accept-Encoding: identity sidesteps it
+  // entirely rather than trying to work around the crash.)
+  const response = await fetchWithTimeout(url, { redirect: 'follow', headers: { 'Accept-Encoding': 'identity' } }, timeoutMs);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${url}: HTTP ${response.status}`);
   }
@@ -26,10 +32,16 @@ export async function fetchTextMaybeGzip(url, timeoutMs = 15000) {
     (buffer.length > 2 && buffer[0] === 0x1f && buffer[1] === 0x8b);
 
   if (isGzip) {
-    const ds = new DecompressionStream('gzip');
-    const stream = new Blob([buffer]).stream().pipeThrough(ds);
-    const decompressed = await new Response(stream).arrayBuffer();
-    return new TextDecoder('utf-8').decode(decompressed);
+    try {
+      const ds = new DecompressionStream('gzip');
+      const stream = new Blob([buffer]).stream().pipeThrough(ds);
+      const decompressed = await new Response(stream).arrayBuffer();
+      return new TextDecoder('utf-8').decode(decompressed);
+    } catch {
+      // Fall through and try decoding as plain text — better a possibly
+      // garbled result than a hard failure on a source that turned out
+      // not to need decompression after all.
+    }
   }
 
   return new TextDecoder('utf-8').decode(buffer);
