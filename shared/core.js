@@ -137,7 +137,11 @@ export function pickBestName(displayNames, fallback) {
 }
 
 export function normalizeWorkerUrl(baseUrl, value) {
-  if (!value) return null;
+  // Some worker.json files declare `channels`/`guide` as an object (e.g.
+  // multiple language/quality variants) rather than a plain string path.
+  // new URL() would silently coerce that via toString() into a garbage
+  // ".../[object Object]" URL instead of failing — reject it outright.
+  if (!value || typeof value !== 'string') return null;
   try {
     return new URL(value, baseUrl).toString();
   } catch {
