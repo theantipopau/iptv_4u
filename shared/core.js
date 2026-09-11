@@ -254,7 +254,39 @@ export function scoreMatch(needle, haystack) {
     if (setB.has(token)) overlap += genericTokenWeight(token);
   }
 
-  return overlap / Math.max(tokensA.length, tokensB.length);
+  const score = overlap / Math.max(tokensA.length, tokensB.length);
+
+  // "Fox Sports 502" vs "Fox Sports 501" share everything except the one
+  // token that actually distinguishes them. iptv-org's catalog only has
+  // a handful of the numbered Fox Sports AU channels as dedicated
+  // entries (503, 505, 506) — query for one that isn't (502, 504, 507,
+  // 508...) and "Fox"+"Sports" overlap alone was enough to match the
+  // wrong numbered channel. A real, specific (2+ digit) number token
+  // present on both sides that doesn't match anywhere is a strong signal
+  // these are different channels, not weak evidence to be outweighed by
+  // shared generic words.
+  if (hasConflictingNumber(tokensA, tokensB)) {
+    return Math.min(score, 0.3);
+  }
+
+  return score;
+}
+
+function hasConflictingNumber(tokensA, tokensB) {
+  // A 2+ digit number present on one side and absent from the other is a
+  // mismatch whether the other side has a *different* number ("Fox
+  // Sports 502" vs "Fox Sports 501") or no number at all ("Fox Sports
+  // 502" vs "Fox Sports News") — either way, the query was specific
+  // about which numbered channel it wants, and generic word overlap
+  // ("Fox", "Sports") alone shouldn't paper over that.
+  const numsA = tokensA.filter((t) => /^\d{2,}$/.test(t));
+  const numsB = tokensB.filter((t) => /^\d{2,}$/.test(t));
+  if (!numsA.length && !numsB.length) return false;
+  const setA = new Set(numsA);
+  const setB = new Set(numsB);
+  for (const n of numsA) if (!setB.has(n)) return true;
+  for (const n of numsB) if (!setA.has(n)) return true;
+  return false;
 }
 
 // Generic broadcast-industry words (and bare 1-2 digit numbers) are weak
