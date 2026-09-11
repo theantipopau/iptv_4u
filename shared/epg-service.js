@@ -155,15 +155,32 @@ export async function loadSourceChannels(cache, source) {
 
   let channels = [];
   if (parsed.channels && parsed.channels.channel) {
+    // Classic WebGrab+Plus-style channel catalog — a plain id/name
+    // mapping, never carries programmes of its own.
     channels = arrify(parsed.channels.channel).map((c) => {
       const display = typeof c === 'string' ? c : (c['#text'] || c['@_name'] || '');
       return {
         id: c['@_xmltv_id'] || c['@_id'] || '',
         name: display || c['@_site_name'] || c['@_site_id'] || '',
-        logoUrl: null
+        logoUrl: null,
+        hasSchedule: false
       };
     });
   } else if (parsed.tv && parsed.tv.channel) {
+    // A channel node existing here doesn't mean it has a real schedule —
+    // an EPG generator that can't identify a channel will often still
+    // emit a placeholder <channel> (mirroring the input name back, maybe
+    // with a logo) with zero matching <programme> entries. Track which
+    // channel ids actually have at least one programme so a placeholder
+    // isn't scored as confidently as a real match — this is exactly what
+    // let an unidentified 24/7 movie channel's own empty stub outscore a
+    // correct TMDB identification (score high enough to count as a
+    // "confident guide match" and suppress the TMDB fallback entirely,
+    // while adding zero real programmes on export).
+    const scheduledIds = new Set(
+      arrify(parsed.tv.programme).map((p) => p['@_channel']).filter(Boolean)
+    );
+
     channels = arrify(parsed.tv.channel).map((c) => {
       const names = arrify(c['display-name']).map((n) => {
         if (typeof n === 'string') return n;
@@ -171,10 +188,12 @@ export async function loadSourceChannels(cache, source) {
         return '';
       }).filter(Boolean);
       const icon = Array.isArray(c.icon) ? c.icon[0] : c.icon;
+      const id = c['@_id'] || '';
       return {
-        id: c['@_id'] || '',
-        name: names[0] || c['@_id'] || '',
-        logoUrl: (icon && icon['@_src']) || null
+        id,
+        name: names[0] || id,
+        logoUrl: (icon && icon['@_src']) || null,
+        hasSchedule: scheduledIds.has(id)
       };
     });
   }
@@ -306,10 +325,13 @@ export async function searchChannel(cache, apiKey, { channelName, tvgId, groupTi
           score,
           channelName: sc.name,
           channelId: sc.id,
-          guideUrl: source.guideUrl,
+          // Only offer a guide merge when this specific channel actually
+          // has programme data in this source — a channel node existing
+          // isn't a promise of that (see loadSourceChannels).
+          guideUrl: sc.hasSchedule ? source.guideUrl : null,
           channelsUrl: source.channelsUrl,
           logoUrl: sc.logoUrl || null,
-          canMergeGuide: true
+          canMergeGuide: !!sc.hasSchedule
         });
       }
       return matches.slice(0, 5);
