@@ -460,21 +460,21 @@ tbody tr.row-selected {
 
 .logo-wrap {
   position: relative;
-  width: 36px;
-  height: 36px;
+  width: 56px;
+  height: 56px;
 }
 
 .logo-edit-btn {
   position: absolute;
-  bottom: -4px;
-  right: -4px;
-  width: 16px;
-  height: 16px;
+  bottom: -5px;
+  right: -5px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   border: 1px solid var(--line);
   background: var(--card);
   color: var(--muted);
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   line-height: 1;
   padding: 0;
   cursor: pointer;
@@ -522,19 +522,21 @@ tbody tr.row-selected {
 }
 
 .logo-thumb {
-  width: 36px;
-  height: 36px;
+  width: 56px;
+  height: 56px;
   object-fit: contain;
-  border-radius: 50%;
+  /* A full circle mask clips wide/rectangular broadcast logos down to an
+     unrecognizable sliver — a rounded square keeps the whole logo visible. */
+  border-radius: 10px;
   background: var(--bg-accent-1);
   border: 1px solid var(--line);
-  padding: 3px;
+  padding: 5px;
 }
 
 .logo-thumb--empty {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
   background: repeating-linear-gradient(45deg, var(--bg-accent-1), var(--bg-accent-1) 5px, var(--bg-accent-2) 5px, var(--bg-accent-2) 10px);
   border: 1px dashed var(--line);
 }
