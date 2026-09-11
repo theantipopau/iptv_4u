@@ -458,6 +458,46 @@ tbody tr.row-selected {
   color: #0d6b47;
 }
 
+.logo-wrap {
+  position: relative;
+  width: 36px;
+  height: 36px;
+}
+
+.logo-edit-btn {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 0.6rem;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.logo-edit-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.logo-url-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 160px;
+  font-size: 0.7rem;
+  padding: 0.2rem 0.3rem;
+  z-index: 2;
+}
+
 .logo-thumb {
   width: 36px;
   height: 36px;

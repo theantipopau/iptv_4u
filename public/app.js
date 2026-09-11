@@ -37,6 +37,7 @@ const el = {
   resumeBtn: document.getElementById('resumeBtn'),
   discardBtn: document.getElementById('discardBtn'),
   saveProjectBtn: document.getElementById('saveProjectBtn'),
+  exportBacklogBtn: document.getElementById('exportBacklogBtn'),
   loadProjectFile: document.getElementById('loadProjectFile'),
   themeToggle: document.getElementById('themeToggle'),
   channelFilter: document.getElementById('channelFilter'),
@@ -419,7 +420,43 @@ function renderTable() {
       </td>
     `;
 
-    tr.querySelector('.logo-cell').innerHTML = logoCell;
+    const logoWrap = document.createElement('div');
+    logoWrap.className = 'logo-wrap';
+    logoWrap.innerHTML = logoCell;
+    const editLogoBtn = document.createElement('button');
+    editLogoBtn.type = 'button';
+    editLogoBtn.className = 'logo-edit-btn';
+    editLogoBtn.title = 'Set a custom logo URL';
+    editLogoBtn.textContent = '✎';
+    editLogoBtn.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'logo-url-input';
+      input.value = logoSrc || '';
+      input.placeholder = 'https://…/logo.png';
+      logoWrap.replaceChildren(input);
+      input.focus();
+      input.select();
+
+      const commit = () => {
+        const value = input.value.trim();
+        state.links.set(channel.index, manualLink(channel, { logoUrl: value || null }));
+        renderTable();
+        autosave();
+      };
+
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') input.blur();
+        if (event.key === 'Escape') {
+          input.value = logoSrc || '';
+          renderTable();
+        }
+      });
+    });
+    logoWrap.appendChild(editLogoBtn);
+    tr.querySelector('.logo-cell').appendChild(logoWrap);
+
     const currentTvgId = linked?.channelId || channel.attrs?.['tvg-id'] || '';
     tr.querySelector('.tvgid-cell').appendChild(
       makeEditableCell(currentTvgId, (value) => {
@@ -895,6 +932,37 @@ async function refreshNow() {
   }
 }
 
+// ---- channel backlog (your own manual fixes, reusable as a guide URL) ----
+//
+// Every channel you've manually corrected (inline-edited tvg-id or logo)
+// gets exported here as a channel-only XMLTV file — no programmes, just
+// id/name/icon. Commit it to your own repo and add its raw URL to the
+// "Your own EPG/guide URL(s)" field: future re-imports of the same
+// provider lineup resolve these automatically instead of needing the
+// same manual fix again, and it isn't at the mercy of what the public
+// iptv-org catalog happens to track (e.g. Fox Sports channel numbers it
+// doesn't have entries for at all).
+
+function buildBacklogXml() {
+  const manualLinks = Array.from(state.links.values()).filter((link) => link.manual);
+  const channelXml = manualLinks.map((link) => {
+    const icon = link.logoUrl ? `\n    <icon src="${escapeHtml(link.logoUrl)}"/>` : '';
+    return `  <channel id="${escapeHtml(link.channelId)}">\n    <display-name>${escapeHtml(link.channelName)}</display-name>${icon}\n  </channel>`;
+  }).join('\n');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<tv generator-info-name="iptv-4u backlog">\n${channelXml}\n</tv>\n`;
+}
+
+function exportBacklog() {
+  const manualCount = Array.from(state.links.values()).filter((link) => link.manual).length;
+  if (!manualCount) {
+    toast('No manually-fixed channels yet — inline-edit a tvg-id or logo first.', 'error');
+    return;
+  }
+  downloadFile('iptv4u_backlog.xml', buildBacklogXml(), 'application/xml');
+  toast(`Downloaded backlog with ${manualCount} channel(s).`, 'success');
+}
+
 // ---- project save/load --------------------------------------------------
 
 function saveProjectFile() {
@@ -1090,6 +1158,10 @@ el.refreshNowBtn.addEventListener('click', () => {
 
 el.saveProjectBtn.addEventListener('click', () => {
   saveProjectFile();
+});
+
+el.exportBacklogBtn.addEventListener('click', () => {
+  exportBacklog();
 });
 
 el.loadProjectFile.addEventListener('change', () => {
