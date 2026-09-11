@@ -569,6 +569,53 @@ export async function getHostedFile(store, slugInput, kind) {
   return store.getStale(`hosted:${slug}:${kind}`);
 }
 
+// ---- custom logo uploads ---------------------------------------------------
+//
+// The best-scoring match for a channel (public catalog, a custom EPG, or a
+// TMDB poster) is sometimes just wrong — e.g. a 24/7 EPG entry that carries
+// a generic/placeholder logo unrelated to the actual movie/show it's
+// looping. This lets a user upload their own image instead of being stuck
+// with whatever the matched source happened to have, without needing to
+// host it externally themselves: the image is stored (same store as
+// published files) and served back from a small, stable same-origin URL.
+
+const MAX_LOGO_BYTES = 2 * 1024 * 1024; // 2MB decoded
+const ALLOWED_LOGO_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+function genLogoId() {
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export async function uploadLogoAsset(store, { imageBase64, contentType }) {
+  if (!imageBase64 || !contentType) {
+    throw new Error('imageBase64 and contentType are required.');
+  }
+  if (!ALLOWED_LOGO_CONTENT_TYPES.has(contentType)) {
+    throw new Error('Unsupported image type — use PNG, JPEG, WebP or GIF.');
+  }
+  // Base64 is ~4/3 the size of the decoded bytes; check before decoding
+  // anything so an oversized upload fails fast and cheap.
+  if (imageBase64.length > (MAX_LOGO_BYTES * 4) / 3 + 100) {
+    throw new Error('Image too large (2MB limit).');
+  }
+
+  const id = genLogoId();
+  await store.set(`logo-asset:${id}`, { contentType, imageBase64 });
+  return { id, url: `/logo/${id}` };
+}
+
+export async function getLogoAsset(store, idInput) {
+  const id = (idInput || '').toLowerCase();
+  if (!/^[a-f0-9]{32}$/.test(id)) return null;
+  return store.getStale(`logo-asset:${id}`);
+}
+
 // ---- scheduled auto-refresh ------------------------------------------------
 //
 // Lets a published slug keep itself up to date on its own: given an M3U

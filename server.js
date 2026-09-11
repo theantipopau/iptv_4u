@@ -13,7 +13,9 @@ import {
   getHostedFile,
   saveRefreshConfig,
   getRefreshConfig,
-  runAutoRefresh
+  runAutoRefresh,
+  uploadLogoAsset,
+  getLogoAsset
 } from './shared/epg-service.js';
 import { createNodeCache } from './shared/node-cache.js';
 
@@ -89,6 +91,15 @@ app.get('/epg/:slug.xml', async (req, res) => {
   const content = await getHostedFile(hostedStore, req.params.slug, 'xml');
   if (!content) return res.status(404).type('text/plain').send('Not found. Publish this guide first.');
   res.type('application/xml').send(content);
+});
+
+app.post('/api/upload-logo', handle(async (req) => uploadLogoAsset(hostedStore, req.body)));
+
+app.get('/logo/:id', async (req, res) => {
+  const asset = await getLogoAsset(hostedStore, req.params.id);
+  if (!asset) return res.status(404).type('text/plain').send('Not found.');
+  res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  res.type(asset.contentType).send(Buffer.from(asset.imageBase64, 'base64'));
 });
 
 app.post('/api/refresh-config', handle(async (req) => ({ config: await saveRefreshConfig(hostedStore, req.body) })));

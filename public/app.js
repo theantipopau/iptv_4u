@@ -426,31 +426,79 @@ function renderTable() {
     const editLogoBtn = document.createElement('button');
     editLogoBtn.type = 'button';
     editLogoBtn.className = 'logo-edit-btn';
-    editLogoBtn.title = 'Set a custom logo URL';
+    editLogoBtn.title = 'Set a custom logo';
     editLogoBtn.textContent = '✎';
     editLogoBtn.addEventListener('click', () => {
+      const editor = document.createElement('div');
+      editor.className = 'logo-editor';
+
       const input = document.createElement('input');
       input.type = 'text';
       input.className = 'logo-url-input';
       input.value = logoSrc || '';
       input.placeholder = 'https://…/logo.png';
-      logoWrap.replaceChildren(input);
+
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = 'image/png,image/jpeg,image/webp,image/gif';
+      fileInput.className = 'logo-file-input';
+      fileInput.title = 'Upload your own image (2MB max)';
+
+      const status = document.createElement('div');
+      status.className = 'logo-editor-status';
+
+      editor.append(input, fileInput, status);
+      logoWrap.replaceChildren(editor);
       input.focus();
       input.select();
 
-      const commit = () => {
-        const value = input.value.trim();
+      const commit = (value) => {
         state.links.set(channel.index, manualLink(channel, { logoUrl: value || null }));
         renderTable();
         autosave();
       };
 
-      input.addEventListener('blur', commit);
+      input.addEventListener('blur', () => {
+        // A file upload in progress already commits on its own; don't
+        // stomp its result with the (possibly stale) text field on blur.
+        if (fileInput.dataset.uploading === '1') return;
+        commit(input.value.trim());
+      });
       input.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') input.blur();
         if (event.key === 'Escape') {
           input.value = logoSrc || '';
           renderTable();
+        }
+      });
+
+      fileInput.addEventListener('change', async () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        if (file.size > 2 * 1024 * 1024) {
+          status.textContent = 'Too large — 2MB max.';
+          return;
+        }
+        fileInput.dataset.uploading = '1';
+        status.textContent = 'Uploading…';
+        try {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(file);
+          });
+          const imageBase64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+          const result = await api('/api/upload-logo', {
+            method: 'POST',
+            body: JSON.stringify({ imageBase64, contentType: file.type })
+          });
+          input.value = result.url;
+          commit(result.url);
+        } catch (error) {
+          status.textContent = error.message || 'Upload failed.';
+        } finally {
+          fileInput.dataset.uploading = '0';
         }
       });
     });

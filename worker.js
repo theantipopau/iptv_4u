@@ -22,7 +22,9 @@ import {
   saveRefreshConfig,
   getRefreshConfig,
   runAutoRefresh,
-  isRefreshDue
+  isRefreshDue,
+  uploadLogoAsset,
+  getLogoAsset
 } from './shared/epg-service.js';
 import { createKvCache } from './shared/kv-cache.js';
 
@@ -119,6 +121,23 @@ export default {
         const content = await getHostedFile(hostedStore, epgMatch[1], 'xml');
         if (!content) return new Response('Not found. Publish this guide first.', { status: 404 });
         return new Response(content, { headers: { 'Content-Type': 'application/xml' } });
+      }
+
+      if (pathname === '/api/upload-logo' && request.method === 'POST') {
+        return ok(await uploadLogoAsset(hostedStore, await readJson(request)));
+      }
+
+      const logoMatch = pathname.match(/^\/logo\/([a-f0-9]{32})$/i);
+      if (logoMatch && request.method === 'GET') {
+        const asset = await getLogoAsset(hostedStore, logoMatch[1]);
+        if (!asset) return new Response('Not found.', { status: 404 });
+        const bytes = Uint8Array.from(atob(asset.imageBase64), (c) => c.charCodeAt(0));
+        return new Response(bytes, {
+          headers: {
+            'Content-Type': asset.contentType,
+            'Cache-Control': 'public, max-age=31536000, immutable'
+          }
+        });
       }
     } catch (error) {
       return fail(error);
