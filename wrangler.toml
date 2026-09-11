@@ -9,8 +9,7 @@ binding = "ASSETS"
 
 # iptv4u-epg-cache / iptv4u-hosted-files namespaces (Workers & Pages > KV).
 # This file is what the Git-connected build reads to wire up bindings for
-# this Worker — dashboard "Variables and secrets" is for env vars like
-# TMDB_API_KEY, not these.
+# this Worker.
 [[kv_namespaces]]
 binding = "EPG_CACHE"
 id = "75a22b4f4943419aab48a722501ba0e8"
@@ -18,6 +17,20 @@ id = "75a22b4f4943419aab48a722501ba0e8"
 [[kv_namespaces]]
 binding = "HOSTED_FILES"
 id = "77c0da6744d646e38a775e439588cdbc"
+
+# TMDB_API_KEY as a Secrets Store binding, not a plain dashboard
+# "Runtime variable" — the latter gets silently wiped on every deploy
+# that comes through the GitHub integration (cloudflare/workers-sdk#8871,
+# a known, currently-open Cloudflare bug). A Secrets Store binding is a
+# durable resource reference declared here in config, the same pattern
+# as the KV bindings above, so it isn't subject to that bug. The actual
+# secret value lives only in the Secrets Store — never in this file.
+# env.TMDB_API_KEY is an object here, not a plain string: resolve it
+# with `await env.TMDB_API_KEY.get()`.
+[[secrets_store_secrets]]
+binding = "TMDB_API_KEY"
+store_id = "1e55b8595f244e7ab574e4d542ed2a28"
+secret_name = "tmdb-api-key"
 
 # Drives auto-refresh: fires hourly, and the scheduled() handler in
 # worker.js checks each saved refresh-config for whether it's actually

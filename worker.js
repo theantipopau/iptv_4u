@@ -42,6 +42,17 @@ function fail(error) {
   return Response.json({ ok: false, error: error.message }, { status: error.status || 500 });
 }
 
+async function resolveTmdbApiKey(env) {
+  // Secrets Store binding — an object with an async .get(), not a plain
+  // string like the old (broken-on-GitHub-deploy) dashboard variable was.
+  if (!env.TMDB_API_KEY) return '';
+  try {
+    return (await env.TMDB_API_KEY.get()) || '';
+  } catch {
+    return '';
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -59,7 +70,7 @@ export default {
       }
 
       if (pathname === '/api/search-channel' && request.method === 'POST') {
-        return ok(await searchChannel(cache, env.TMDB_API_KEY || '', await readJson(request)));
+        return ok(await searchChannel(cache, await resolveTmdbApiKey(env), await readJson(request)));
       }
 
       if (pathname === '/api/merge-guide' && request.method === 'POST') {
@@ -93,7 +104,7 @@ export default {
         const body = await readJson(request);
         const config = await getRefreshConfig(hostedStore, body.slug);
         if (!config) throw new Error('No auto-refresh config saved for this slug yet — save one first.');
-        return ok({ config: await runAutoRefresh(cache, hostedStore, env.TMDB_API_KEY || '', config) });
+        return ok({ config: await runAutoRefresh(cache, hostedStore, await resolveTmdbApiKey(env), config) });
       }
 
       const iptvMatch = pathname.match(/^\/iptv\/([^/]+)\.m3u$/i);
@@ -126,6 +137,7 @@ export default {
     const hostedStore = createKvCache(env.HOSTED_FILES);
 
     ctx.waitUntil((async () => {
+      const tmdbApiKey = await resolveTmdbApiKey(env);
       const list = await env.HOSTED_FILES.list({ prefix: 'refresh-config:' });
       for (const key of list.keys) {
         try {
@@ -133,7 +145,7 @@ export default {
           if (!raw) continue;
           const config = JSON.parse(raw).data;
           if (!isRefreshDue(config)) continue;
-          await runAutoRefresh(cache, hostedStore, env.TMDB_API_KEY || '', config);
+          await runAutoRefresh(cache, hostedStore, tmdbApiKey, config);
         } catch (error) {
           console.error(`Auto-refresh failed for ${key.name}:`, error.message);
         }
@@ -141,4 +153,3 @@ export default {
     })());
   }
 };
-// no-op: testing whether TMDB_API_KEY survives a GitHub-triggered redeploy
