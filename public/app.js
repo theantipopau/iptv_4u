@@ -8,7 +8,9 @@ const state = {
   discoveredSources: [],
   links: new Map(), // channel index -> link object
   contexts: new Map(), // channel index -> search context (24/7, country hint, ...)
-  errors: new Map() // channel index -> last error message
+  errors: new Map(), // channel index -> last error message
+  selected: new Set(), // channel indexes currently checked in the table
+  sort: { key: null, direction: 'asc' }
 };
 
 const el = {
@@ -49,7 +51,23 @@ const el = {
   publishM3uUrl: document.getElementById('publishM3uUrl'),
   publishXmlUrl: document.getElementById('publishXmlUrl'),
   copyM3uUrlBtn: document.getElementById('copyM3uUrlBtn'),
-  copyXmlUrlBtn: document.getElementById('copyXmlUrlBtn')
+  copyXmlUrlBtn: document.getElementById('copyXmlUrlBtn'),
+  statsBar: document.getElementById('statsBar'),
+  statTotal: document.getElementById('statTotal'),
+  statGuide: document.getElementById('statGuide'),
+  statLogo: document.getElementById('statLogo'),
+  statNone: document.getElementById('statNone'),
+  selectAllCheckbox: document.getElementById('selectAllCheckbox'),
+  bulkToolbar: document.getElementById('bulkToolbar'),
+  bulkCount: document.getElementById('bulkCount'),
+  bulkMatchBtn: document.getElementById('bulkMatchBtn'),
+  bulkClearBtn: document.getElementById('bulkClearBtn'),
+  bulkDeselectBtn: document.getElementById('bulkDeselectBtn'),
+  autoRefreshM3uUrl: document.getElementById('autoRefreshM3uUrl'),
+  autoRefreshInterval: document.getElementById('autoRefreshInterval'),
+  saveAutoRefreshBtn: document.getElementById('saveAutoRefreshBtn'),
+  refreshNowBtn: document.getElementById('refreshNowBtn'),
+  autoRefreshStatus: document.getElementById('autoRefreshStatus')
 };
 
 // ---- toasts ----------------------------------------------------------
@@ -147,12 +165,31 @@ function buildLinkFromMatch(match, channel) {
     guideUrl: match.guideUrl || null,
     canMergeGuide: !!match.canMergeGuide,
     tmdb: isTmdb ? match.tmdb : null,
-    synthesize: isTmdb && !!match.canSynthesizeGuide
+    synthesize: isTmdb && !!match.canSynthesizeGuide,
+    score: typeof match.score === 'number' ? match.score : null
+  };
+}
+
+function manualLink(channel, { channelId, logoUrl }) {
+  const existing = state.links.get(channel.index);
+  return {
+    channelIndex: channel.index,
+    channelId: channelId !== undefined ? channelId : (existing?.channelId || slugify(channel.name)),
+    channelName: existing?.channelName || channel.name,
+    source: 'manual',
+    logoUrl: logoUrl !== undefined ? (logoUrl || null) : (existing?.logoUrl || null),
+    guideUrl: existing?.guideUrl || null,
+    canMergeGuide: !!existing?.canMergeGuide,
+    tmdb: existing?.tmdb || null,
+    synthesize: !!existing?.synthesize,
+    score: existing?.score ?? null,
+    manual: true
   };
 }
 
 function formatLink(link) {
   if (!link) return 'Not linked';
+  if (link.manual) return `${link.channelId} (manual)`;
   if (link.tmdb) {
     return `TMDB: ${link.channelName} (logo${link.synthesize ? ' + placeholder guide' : ''})`;
   }
@@ -160,6 +197,14 @@ function formatLink(link) {
     return `${link.channelId} @ ${link.source} (full guide)`;
   }
   return `${link.channelId} @ ${link.source || 'unknown'} (logo only)`;
+}
+
+// 3 = full guide, 2 = logo only / tmdb, 1 = manual, 0 = not linked
+function statusRank(link) {
+  if (!link) return 0;
+  if (link.manual) return 1;
+  if (link.canMergeGuide) return 3;
+  return 2;
 }
 
 // ---- persistence --------------------------------------------------------
@@ -228,13 +273,120 @@ function updateTmdbStatus(context) {
     : 'TMDB lookups disabled (no TMDB_API_KEY set on the server) — 24/7 channels are still flagged, just without automatic poster art. See .env.example.';
 }
 
+function sortedChannels() {
+  const list = [...state.m3uChannels];
+  const { key, direction } = state.sort;
+  if (!key) return list;
+
+  const dir = direction === 'desc' ? -1 : 1;
+  const valueFor = (channel) => {
+    const linked = state.links.get(channel.index);
+    switch (key) {
+      case 'name':
+        return channel.name.toLowerCase();
+      case 'tvgid':
+        return (channel.attrs?.['tvg-id'] || '').toLowerCase();
+      case 'status':
+        return statusRank(linked);
+      case 'score':
+        return linked?.score ?? -1;
+      default:
+        return 0;
+    }
+  };
+
+  list.sort((a, b) => {
+    const va = valueFor(a);
+    const vb = valueFor(b);
+    if (va < vb) return -1 * dir;
+    if (va > vb) return 1 * dir;
+    return a.index - b.index;
+  });
+  return list;
+}
+
+function updateSortHeaders() {
+  document.querySelectorAll('th.sortable').forEach((th) => {
+    const active = th.dataset.sort === state.sort.key;
+    th.dataset.active = active ? 'true' : 'false';
+    const arrow = active ? (state.sort.direction === 'desc' ? '▼' : '▲') : '↕';
+    th.querySelector('.sort-arrow')?.remove();
+    th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${arrow}</span>`);
+  });
+}
+
+function updateStatsBar() {
+  const total = state.m3uChannels.length;
+  if (!total) {
+    el.statsBar.hidden = true;
+    return;
+  }
+
+  let guide = 0;
+  let logo = 0;
+  for (const link of state.links.values()) {
+    if (link.canMergeGuide) guide += 1;
+    else logo += 1;
+  }
+  const none = total - state.links.size;
+
+  el.statsBar.hidden = false;
+  el.statTotal.textContent = `${total} channel${total === 1 ? '' : 's'}`;
+  el.statGuide.textContent = `${guide} guide`;
+  el.statLogo.textContent = `${logo} logo`;
+  el.statNone.textContent = `${none} unlinked`;
+}
+
+function updateBulkToolbar() {
+  const count = state.selected.size;
+  el.bulkToolbar.hidden = count === 0;
+  el.bulkCount.textContent = `${count} selected`;
+  el.selectAllCheckbox.checked = count > 0 && count === el.channelsTableBody.querySelectorAll('tr:not([hidden])').length;
+}
+
+function makeEditableCell(currentValue, onCommit) {
+  const span = document.createElement('span');
+  span.className = 'editable-cell';
+  span.title = 'Click to edit';
+  span.textContent = currentValue || '(none — click to set)';
+
+  span.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = currentValue || '';
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+
+    const commit = () => {
+      const value = input.value.trim();
+      input.replaceWith(span);
+      if (value !== (currentValue || '')) onCommit(value);
+    };
+
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') input.blur();
+      if (event.key === 'Escape') {
+        input.value = currentValue || '';
+        input.blur();
+      }
+    });
+  });
+
+  return span;
+}
+
 function renderTable() {
   el.channelsTableBody.innerHTML = '';
-  state.m3uChannels.forEach((channel) => {
+  sortedChannels().forEach((channel) => {
     const tr = document.createElement('tr');
+    tr.dataset.index = String(channel.index);
     const linked = state.links.get(channel.index);
     const context = state.contexts.get(channel.index);
     const error = state.errors.get(channel.index);
+
+    if (state.selected.has(channel.index)) tr.classList.add('row-selected');
 
     const logoSrc = (linked && linked.logoUrl) || channel.attrs?.['tvg-logo'] || '';
     const logoCell = logoSrc
@@ -244,28 +396,45 @@ function renderTable() {
     const badges = [];
     if (context?.isTwentyFourSeven) badges.push('<span class="badge badge--247">24/7</span>');
     if (linked?.tmdb) badges.push('<span class="badge badge--tmdb">TMDB</span>');
+    if (linked?.manual) badges.push('<span class="badge">Manual</span>');
     if (error) badges.push(`<span class="badge badge--error" title="${escapeHtml(error)}">Search failed</span>`);
 
+    const scoreText = typeof linked?.score === 'number' ? linked.score.toFixed(2) : '—';
+
     tr.innerHTML = `
-      <td>${channel.index + 1}</td>
-      <td>${logoCell}</td>
+      <td class="col-check"><input type="checkbox" class="row-checkbox" data-index="${channel.index}" ${state.selected.has(channel.index) ? 'checked' : ''} /></td>
+      <td class="logo-cell"></td>
       <td>
         <strong>${escapeHtml(channel.name)}</strong>
         ${badges.join(' ')}
         <div class="small">${escapeHtml(channel.url || '')}</div>
       </td>
-      <td><code>${escapeHtml(channel.attrs?.['tvg-id'] || '')}</code></td>
+      <td class="tvgid-cell"></td>
       <td>
         <span>${escapeHtml(formatLink(linked))}</span>
       </td>
+      <td>${scoreText}</td>
       <td>
         <button class="btn" data-action="search" data-index="${channel.index}">Search</button>
       </td>
     `;
 
+    tr.querySelector('.logo-cell').innerHTML = logoCell;
+    const currentTvgId = linked?.channelId || channel.attrs?.['tvg-id'] || '';
+    tr.querySelector('.tvgid-cell').appendChild(
+      makeEditableCell(currentTvgId, (value) => {
+        state.links.set(channel.index, manualLink(channel, { channelId: value || undefined }));
+        renderTable();
+        autosave();
+      })
+    );
+
     el.channelsTableBody.appendChild(tr);
   });
 
+  updateSortHeaders();
+  updateStatsBar();
+  updateBulkToolbar();
   applyChannelFilter();
 }
 
@@ -276,8 +445,9 @@ function applyChannelFilter() {
   const rows = Array.from(el.channelsTableBody.querySelectorAll('tr'));
   let visible = 0;
 
-  rows.forEach((row, i) => {
-    const channel = state.m3uChannels[i];
+  rows.forEach((row) => {
+    const index = Number(row.dataset.index);
+    const channel = state.m3uChannels.find((c) => c.index === index);
     if (!channel) return;
     const linked = state.links.get(channel.index);
     const haystack = [
@@ -433,6 +603,45 @@ async function searchForChannel(channel) {
   renderTable();
 }
 
+async function matchOneChannel(channel) {
+  const result = await api('/api/search-channel', {
+    method: 'POST',
+    body: JSON.stringify({
+      channelName: channel.name,
+      tvgId: channel.attrs?.['tvg-id'] || '',
+      groupTitle: channel.attrs?.['group-title'] || '',
+      maxSources: Number(el.maxSources.value || 120),
+      customGuideUrl: el.customGuideUrl.value.trim()
+    })
+  });
+
+  state.contexts.set(channel.index, result.context);
+  state.errors.delete(channel.index);
+  updateTmdbStatus(result.context);
+
+  const best = result.matches[0];
+  if (best) {
+    state.links.set(channel.index, buildLinkFromMatch(best, channel));
+  }
+}
+
+async function matchChannelList(channels, { onProgress } = {}) {
+  let processed = 0;
+  let failed = 0;
+  for (const channel of channels) {
+    processed += 1;
+    onProgress?.(processed, channels.length, channel);
+    try {
+      await matchOneChannel(channel);
+    } catch (error) {
+      failed += 1;
+      state.errors.set(channel.index, error.message);
+      console.error(error);
+    }
+  }
+  return { processed, failed };
+}
+
 async function autoMatchAll() {
   if (!state.m3uChannels.length) {
     toast('Load files first.', 'error');
@@ -443,38 +652,12 @@ async function autoMatchAll() {
   el.progressTrack.hidden = false;
   el.progressFill.style.width = '0%';
 
-  let processed = 0;
-  let failed = 0;
-  for (const channel of state.m3uChannels) {
-    processed += 1;
-    el.matchProgress.innerHTML = `<span class="spinner"></span>Auto matching ${processed}/${state.m3uChannels.length}: ${escapeHtml(channel.name)}`;
-    el.progressFill.style.width = `${Math.round((processed / state.m3uChannels.length) * 100)}%`;
-    try {
-      const result = await api('/api/search-channel', {
-        method: 'POST',
-        body: JSON.stringify({
-          channelName: channel.name,
-          tvgId: channel.attrs?.['tvg-id'] || '',
-          groupTitle: channel.attrs?.['group-title'] || '',
-          maxSources: Number(el.maxSources.value || 120),
-          customGuideUrl: el.customGuideUrl.value.trim()
-        })
-      });
-
-      state.contexts.set(channel.index, result.context);
-      state.errors.delete(channel.index);
-      updateTmdbStatus(result.context);
-
-      const best = result.matches[0];
-      if (best) {
-        state.links.set(channel.index, buildLinkFromMatch(best, channel));
-      }
-    } catch (error) {
-      failed += 1;
-      state.errors.set(channel.index, error.message);
-      console.error(error);
+  const { processed, failed } = await matchChannelList(state.m3uChannels, {
+    onProgress: (i, total, channel) => {
+      el.matchProgress.innerHTML = `<span class="spinner"></span>Auto matching ${i}/${total}: ${escapeHtml(channel.name)}`;
+      el.progressFill.style.width = `${Math.round((i / total) * 100)}%`;
     }
-  }
+  });
 
   el.matchProgress.textContent = `Auto match complete: ${processed - failed}/${processed} succeeded${failed ? `, ${failed} failed` : ''}.`;
   el.autoMatchBtn.disabled = false;
@@ -635,6 +818,83 @@ function copyToClipboard(value) {
     .catch(() => toast('Could not copy — select and copy manually.', 'error'));
 }
 
+// ---- auto-refresh --------------------------------------------------------
+
+function describeRefreshConfig(config) {
+  if (!config) return '';
+  const parts = [];
+  if (config.intervalKey) parts.push(`Auto-refresh: every ${config.intervalKey.replace('h', ' hours')}`);
+  else parts.push('Auto-refresh: off');
+
+  if (config.lastRunAt) {
+    const when = new Date(config.lastRunAt).toLocaleString();
+    if (config.lastRunStatus === 'ok') {
+      parts.push(`last ran ${when} (${config.lastRunChannelCount ?? '?'} channels, ${config.lastRunGuideCount ?? 0} guide / ${config.lastRunLogoCount ?? 0} logo)`);
+    } else {
+      parts.push(`last run failed ${when}: ${config.lastRunError || 'unknown error'}`);
+    }
+  } else {
+    parts.push('never run yet');
+  }
+  return parts.join(' — ');
+}
+
+async function saveAutoRefreshConfig() {
+  const slug = el.publishSlug.value.trim();
+  if (!slug) {
+    toast('Set a URL slug in the Publish section first.', 'error');
+    return;
+  }
+  const m3uUrl = el.autoRefreshM3uUrl.value.trim();
+  if (!m3uUrl) {
+    toast('Enter an M3U source URL.', 'error');
+    return;
+  }
+
+  el.saveAutoRefreshBtn.disabled = true;
+  try {
+    const result = await api('/api/refresh-config', {
+      method: 'POST',
+      body: JSON.stringify({
+        slug,
+        m3uUrl,
+        customGuideUrl: el.customGuideUrl.value.trim(),
+        intervalKey: el.autoRefreshInterval.value || null
+      })
+    });
+    el.autoRefreshStatus.textContent = describeRefreshConfig(result.config);
+    toast('Auto-refresh config saved.', 'success');
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    el.saveAutoRefreshBtn.disabled = false;
+  }
+}
+
+async function refreshNow() {
+  const slug = el.publishSlug.value.trim();
+  if (!slug) {
+    toast('Set a URL slug in the Publish section first.', 'error');
+    return;
+  }
+
+  el.refreshNowBtn.disabled = true;
+  el.autoRefreshStatus.innerHTML = '<span class="spinner"></span>Refreshing — this fetches the M3U, re-matches every channel, and re-publishes…';
+  try {
+    const result = await api('/api/refresh-now', {
+      method: 'POST',
+      body: JSON.stringify({ slug })
+    });
+    el.autoRefreshStatus.textContent = describeRefreshConfig(result.config);
+    toast('Refresh complete.', 'success');
+  } catch (error) {
+    el.autoRefreshStatus.textContent = '';
+    toast(error.message, 'error');
+  } finally {
+    el.refreshNowBtn.disabled = false;
+  }
+}
+
 // ---- project save/load --------------------------------------------------
 
 function saveProjectFile() {
@@ -707,6 +967,82 @@ el.channelsTableBody.addEventListener('click', (event) => {
   });
 });
 
+el.channelsTableBody.addEventListener('change', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement) || !target.classList.contains('row-checkbox')) return;
+
+  const index = Number(target.dataset.index);
+  if (target.checked) state.selected.add(index);
+  else state.selected.delete(index);
+
+  target.closest('tr')?.classList.toggle('row-selected', target.checked);
+  updateBulkToolbar();
+});
+
+el.selectAllCheckbox.addEventListener('change', () => {
+  const checked = el.selectAllCheckbox.checked;
+  const visibleRows = Array.from(el.channelsTableBody.querySelectorAll('tr:not([hidden])'));
+  visibleRows.forEach((row) => {
+    const index = Number(row.dataset.index);
+    if (checked) state.selected.add(index);
+    else state.selected.delete(index);
+  });
+  renderTable();
+});
+
+document.querySelectorAll('th.sortable').forEach((th) => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.sort;
+    if (state.sort.key === key) {
+      state.sort.direction = state.sort.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.sort = { key, direction: 'asc' };
+    }
+    renderTable();
+  });
+});
+
+el.bulkDeselectBtn.addEventListener('click', () => {
+  state.selected.clear();
+  renderTable();
+});
+
+el.bulkClearBtn.addEventListener('click', () => {
+  for (const index of state.selected) {
+    state.links.delete(index);
+    state.contexts.delete(index);
+    state.errors.delete(index);
+  }
+  renderTable();
+  autosave();
+  toast('Cleared links for selected channels.', 'success');
+});
+
+el.bulkMatchBtn.addEventListener('click', () => {
+  const channels = state.m3uChannels.filter((c) => state.selected.has(c.index));
+  if (!channels.length) return;
+
+  el.bulkMatchBtn.disabled = true;
+  matchChannelList(channels, {
+    onProgress: (i, total, channel) => {
+      el.matchProgress.innerHTML = `<span class="spinner"></span>Re-matching ${i}/${total}: ${escapeHtml(channel.name)}`;
+    }
+  })
+    .then(({ processed, failed }) => {
+      el.matchProgress.textContent = `Re-match complete: ${processed - failed}/${processed} succeeded${failed ? `, ${failed} failed` : ''}.`;
+      renderTable();
+      autosave();
+      toast(failed ? `Finished with ${failed} failure(s).` : 'Re-match complete.', failed ? 'error' : 'success');
+    })
+    .catch((error) => {
+      console.error(error);
+      toast(error.message, 'error');
+    })
+    .finally(() => {
+      el.bulkMatchBtn.disabled = false;
+    });
+});
+
 el.autoMatchBtn.addEventListener('click', () => {
   autoMatchAll().catch((error) => {
     console.error(error);
@@ -737,6 +1073,20 @@ el.publishBtn.addEventListener('click', () => {
 
 el.copyM3uUrlBtn.addEventListener('click', () => copyToClipboard(el.publishM3uUrl.value));
 el.copyXmlUrlBtn.addEventListener('click', () => copyToClipboard(el.publishXmlUrl.value));
+
+el.saveAutoRefreshBtn.addEventListener('click', () => {
+  saveAutoRefreshConfig().catch((error) => {
+    console.error(error);
+    toast(error.message, 'error');
+  });
+});
+
+el.refreshNowBtn.addEventListener('click', () => {
+  refreshNow().catch((error) => {
+    console.error(error);
+    toast(error.message, 'error');
+  });
+});
 
 el.saveProjectBtn.addEventListener('click', () => {
   saveProjectFile();

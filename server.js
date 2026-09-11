@@ -10,7 +10,10 @@ import {
   applyIdentity,
   exportM3u,
   publishFiles,
-  getHostedFile
+  getHostedFile,
+  saveRefreshConfig,
+  getRefreshConfig,
+  runAutoRefresh
 } from './shared/epg-service.js';
 import { createNodeCache } from './shared/node-cache.js';
 
@@ -87,6 +90,16 @@ app.get('/epg/:slug.xml', async (req, res) => {
   if (!content) return res.status(404).type('text/plain').send('Not found. Publish this guide first.');
   res.type('application/xml').send(content);
 });
+
+app.post('/api/refresh-config', handle(async (req) => ({ config: await saveRefreshConfig(hostedStore, req.body) })));
+
+app.get('/api/refresh-config/:slug', handle(async (req) => ({ config: await getRefreshConfig(hostedStore, req.params.slug) })));
+
+app.post('/api/refresh-now', handle(async (req) => {
+  const config = await getRefreshConfig(hostedStore, req.body.slug);
+  if (!config) throw new Error('No auto-refresh config saved for this slug yet — save one first.');
+  return { config: await runAutoRefresh(cache, hostedStore, TMDB_API_KEY, config) };
+}));
 
 app.listen(PORT, () => {
   console.log(`IPTV 4U running on http://localhost:${PORT}`);

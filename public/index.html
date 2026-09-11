@@ -11,18 +11,27 @@
     <link rel="icon" type="image/png" href="/assets/logo.png" />
   </head>
   <body>
-    <main class="app-shell">
-      <section class="hero">
+    <header class="app-bar">
+      <div class="app-bar-inner">
         <div class="hero-left">
-          <img class="hero-logo" src="/assets/logo.png" alt="IPTV 4U logo" width="64" height="64" />
+          <img class="hero-logo" src="/assets/logo.png" alt="IPTV 4U logo" width="40" height="40" />
           <div>
             <p class="eyebrow">IPTV 4U</p>
             <h1>M3U + XMLTV EPG Linker</h1>
-            <p class="subtitle">Load a playlist, auto-find online EPG + logo matches, detect 24/7 channels, merge selected guide data, and export updated outputs.</p>
           </div>
         </div>
+        <div id="statsBar" class="stats-bar" hidden>
+          <span class="stat-pill" id="statTotal" title="Total channels">0 channels</span>
+          <span class="stat-pill stat-pill--guide" id="statGuide" title="Full guide merge">0 guide</span>
+          <span class="stat-pill stat-pill--logo" id="statLogo" title="Logo only">0 logo</span>
+          <span class="stat-pill stat-pill--none" id="statNone" title="Not linked">0 unlinked</span>
+        </div>
         <button id="themeToggle" class="theme-toggle" type="button" title="Toggle dark mode" aria-label="Toggle dark mode">🌓</button>
-      </section>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <p class="subtitle">Load a playlist, auto-find online EPG + logo matches, detect 24/7 channels, merge selected guide data, and export or publish updated outputs.</p>
 
       <div id="resumeBanner" class="banner" hidden>
         <span>A previous session was found in this browser.</span>
@@ -80,15 +89,22 @@
           <input id="channelFilter" type="search" placeholder="Filter channels by name, group, or link status…" />
           <span id="tableCount" class="table-count"></span>
         </div>
+        <div id="bulkToolbar" class="bulk-toolbar" hidden>
+          <span id="bulkCount" class="small"></span>
+          <button id="bulkMatchBtn" class="btn">Re-match Selected</button>
+          <button id="bulkClearBtn" class="btn">Clear Links</button>
+          <button id="bulkDeselectBtn" class="btn">Deselect All</button>
+        </div>
         <div class="table-wrap">
           <table id="channelsTable">
             <thead>
               <tr>
-                <th>#</th>
+                <th class="col-check"><input type="checkbox" id="selectAllCheckbox" title="Select all visible" /></th>
                 <th>Logo</th>
-                <th>M3U Channel</th>
-                <th>Current `tvg-id`</th>
-                <th>Linked EPG</th>
+                <th data-sort="name" class="sortable">M3U Channel</th>
+                <th data-sort="tvgid" class="sortable">Current `tvg-id`</th>
+                <th data-sort="status" class="sortable">Linked EPG</th>
+                <th data-sort="score" class="sortable">Score</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -133,6 +149,31 @@
               <button id="copyXmlUrlBtn" class="btn" type="button">Copy</button>
             </div>
           </label>
+        </div>
+
+        <div class="divider"></div>
+
+        <h3 class="sub-heading">Keep it fresh automatically</h3>
+        <p class="small">Give it an M3U URL (instead of just a file upload) and it'll periodically re-fetch, re-match, and re-publish under the same slug on its own — no need to come back and re-upload.</p>
+        <div class="controls-grid">
+          <label>
+            <span>M3U source URL</span>
+            <input id="autoRefreshM3uUrl" type="text" placeholder="https://provider.example.com/playlist.m3u" />
+          </label>
+          <label>
+            <span>Refresh interval</span>
+            <select id="autoRefreshInterval">
+              <option value="">Off</option>
+              <option value="6h">Every 6 hours</option>
+              <option value="12h">Every 12 hours</option>
+              <option value="24h">Daily</option>
+            </select>
+          </label>
+        </div>
+        <div class="controls-grid">
+          <button id="saveAutoRefreshBtn" class="btn">Save Auto-Refresh Config</button>
+          <button id="refreshNowBtn" class="btn">Refresh Now</button>
+          <div id="autoRefreshStatus" class="inline-status"></div>
         </div>
       </section>
 

@@ -18,3 +18,10 @@ id = "75a22b4f4943419aab48a722501ba0e8"
 [[kv_namespaces]]
 binding = "HOSTED_FILES"
 id = "77c0da6744d646e38a775e439588cdbc"
+
+# Drives auto-refresh: fires hourly, and the scheduled() handler in
+# worker.js checks each saved refresh-config for whether it's actually
+# due yet per its own interval (Cloudflare only supports fixed cron
+# schedules, not one per user, hence the hourly tick + due-check).
+[triggers]
+crons = ["0 * * * *"]

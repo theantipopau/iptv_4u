@@ -3,7 +3,9 @@
 // Functions, which never got wired up here since that per-file /functions
 // routing convention doesn't apply to this resource type). One fetch
 // handler routes /api/*, /iptv/*.m3u and /epg/*.xml, then falls back to
-// env.ASSETS.fetch() for everything else (the public/ static site).
+// env.ASSETS.fetch() for everything else (the public/ static site). A
+// separate `scheduled` handler drives auto-refresh, triggered by the cron
+// declared in wrangler.toml.
 //
 // wrangler.toml declares `main = "worker.js"` and `[assets]` for this to
 // actually get bundled and deployed as Worker logic instead of assets-only.
@@ -16,7 +18,11 @@ import {
   applyIdentity,
   exportM3u,
   publishFiles,
-  getHostedFile
+  getHostedFile,
+  saveRefreshConfig,
+  getRefreshConfig,
+  runAutoRefresh,
+  isRefreshDue
 } from './shared/epg-service.js';
 import { createKvCache } from './shared/kv-cache.js';
 
@@ -73,6 +79,23 @@ export default {
         return ok(await publishFiles(hostedStore, body.slug, body));
       }
 
+      if (pathname === '/api/refresh-config' && request.method === 'POST') {
+        const body = await readJson(request);
+        return ok({ config: await saveRefreshConfig(hostedStore, body) });
+      }
+
+      const refreshConfigMatch = pathname.match(/^\/api\/refresh-config\/([^/]+)$/);
+      if (refreshConfigMatch && request.method === 'GET') {
+        return ok({ config: await getRefreshConfig(hostedStore, refreshConfigMatch[1]) });
+      }
+
+      if (pathname === '/api/refresh-now' && request.method === 'POST') {
+        const body = await readJson(request);
+        const config = await getRefreshConfig(hostedStore, body.slug);
+        if (!config) throw new Error('No auto-refresh config saved for this slug yet — save one first.');
+        return ok({ config: await runAutoRefresh(cache, hostedStore, env.TMDB_API_KEY || '', config) });
+      }
+
       const iptvMatch = pathname.match(/^\/iptv\/([^/]+)\.m3u$/i);
       if (iptvMatch && request.method === 'GET') {
         const content = await getHostedFile(hostedStore, iptvMatch[1], 'm3u');
@@ -91,5 +114,30 @@ export default {
     }
 
     return env.ASSETS.fetch(request);
+  },
+
+  // Cloudflare Cron Triggers only support fixed schedules (not one per
+  // user), so this fires on a fixed tick (see wrangler.toml) and checks
+  // every saved config for whether it's actually due per its own
+  // intervalKey — the standard pattern for per-resource intervals on top
+  // of a shared cron.
+  async scheduled(event, env, ctx) {
+    const cache = createKvCache(env.EPG_CACHE);
+    const hostedStore = createKvCache(env.HOSTED_FILES);
+
+    ctx.waitUntil((async () => {
+      const list = await env.HOSTED_FILES.list({ prefix: 'refresh-config:' });
+      for (const key of list.keys) {
+        try {
+          const raw = await env.HOSTED_FILES.get(key.name);
+          if (!raw) continue;
+          const config = JSON.parse(raw).data;
+          if (!isRefreshDue(config)) continue;
+          await runAutoRefresh(cache, hostedStore, env.TMDB_API_KEY || '', config);
+        } catch (error) {
+          console.error(`Auto-refresh failed for ${key.name}:`, error.message);
+        }
+      }
+    })());
   }
 };

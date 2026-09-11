@@ -15,7 +15,9 @@ Point it at an `.m3u` playlist (an existing XMLTV guide is optional — without 
 3. **Scores matches** with country-aware fuzzy matching — "Sky Sports 1 NZ" won't get matched to the UK feed of the same name — plus a fast path for channels whose M3U already carries a correct `tvg-id`.
 4. **Detects 24/7 / marathon / non-stop channels** by name (e.g. `24/7 Band of Brothers [VIP]`), strips the decoration to get a clean title, and — if you've configured a TMDB key — looks up the actual movie/show for its poster art and title, since there's no real schedule to merge for a looping channel.
 5. **Merges** whatever was found — a real schedule, a logo, or a synthesized placeholder schedule for identified 24/7 content — into your XMLTV file, and writes `tvg-logo` back into the M3U.
-6. **Exports** the result as downloadable files, or **publishes** it to a stable URL your player app can point at directly (see below).
+6. **Exports** the result as downloadable files, or **publishes** it to a stable URL your player app can point at directly, optionally kept fresh automatically (see below).
+
+The channel table supports sorting (click a column header), bulk actions (select rows → re-match or clear links together), and inline editing — click a `tvg-id` cell to type a manual override directly. A live stats bar in the header tracks how many channels have a full guide, logo-only, or no link at all as you go.
 
 ## Architecture
 
@@ -79,6 +81,7 @@ Dashboard for the KV namespace IDs and the TMDB secret; `wrangler.toml` for ever
 4. Edit `wrangler.toml` in the repo, replacing the two placeholder KV ids with the real ones from step 3, then push. (This is the one piece of "config as code" here — the Git-connected build reads bindings from this file, not from a dashboard form.)
 5. On the Worker's settings: **Variables and secrets** → add `TMDB_API_KEY` (optional, see below) as a secret.
 6. **Settings → Domains & Routes** → add your custom domain (e.g. `iptv4u.matthurley.dev`) — Cloudflare wires the DNS record automatically since the domain's already on your account.
+7. The Cron Trigger for auto-refresh (`[triggers]` in `wrangler.toml`) should show up under **Settings → Triggers** once deployed — if it doesn't, it can also be added there directly (schedule: `0 * * * *`, i.e. hourly).
 
 ### Troubleshooting
 
@@ -98,12 +101,21 @@ Without a key, 24/7 channels are still detected and flagged in the UI — they j
 
 Step 2 in the UI has a "Your own EPG/guide URL" field. If your provider gives you an XMLTV guide URL (many do, alongside the M3U), paste it there — it's fetched and matched alongside the public sources on every search/auto-match, no scan-limit applied to it since it's one explicit source, not part of the ~300-host public network. For a provider whose M3U already tags channels with a `tvg-id` that matches this guide's own channel `id`s (common — it's usually the same underlying dataset), this resolves real schedules for nearly every linear channel in one pass, which the sparse public worker network usually can't.
 
+## Keeping a published playlist fresh automatically
+
+Step 5 also has an auto-refresh section: give it an M3U **URL** (instead of just a one-off file upload) and a refresh interval, and it periodically re-fetches that URL, re-matches every channel from scratch, and re-publishes under the same slug — no need to come back and re-upload every time your provider updates the lineup.
+
+- **Local**: use "Refresh Now" to trigger it on demand. There's no background scheduler for `npm start` — if you want it automatic locally too, point your own OS-level cron/task scheduler at `POST /api/refresh-now` with `{"slug": "..."}`.
+- **Cloudflare**: a Cron Trigger (`wrangler.toml`'s `[triggers]`, fires hourly) checks every saved config and runs any that are actually due per their own interval — Cloudflare only supports fixed cron schedules, not one per user, hence the hourly tick + due-check rather than a genuinely per-config schedule.
+- Channels are matched with bounded concurrency (5 at a time) and guide files are fetched once per distinct URL per run (not once per channel that happens to resolve to the same guide) — the config, and cache design generally, are built to keep this from blowing out subrequest/CPU budgets even on large lineups. Very large playlists may still want a paid Workers plan; "Refresh Now" is the way to check before relying on the schedule.
+
 ## How matching actually works
 
 - **Exact `tvg-id`**: if your M3U already carries a `tvg-id` that matches a known source's channel id (including your own custom guide, if you've set one), that's scored 1.0 and wins outright.
-- **Country hints**: pulled from bracketed/prefixed/suffixed country codes or full country names in the channel name/`group-title` (e.g. `(NZ)`, `UK:`, `Sky Sports NZ`), then used to boost same-country matches and penalize cross-country name collisions.
-- **24/7 detection**: a regex over `24/7`, `24-7`, `nonstop`, `marathon`, `all day`, `loop(ed)` in the name or group. Once flagged, matching switches to scoring against the *cleaned* title only (decoration stripped) — scoring against the raw name would let a channel literally named "24/7" win by substring containment against every other 24/7-flagged query, which is exactly the failure mode this avoids.
-- **Whole-word containment only**: a short cleaned title (e.g. "Tron") only counts as contained in a candidate name if it appears as a whole word — otherwise a channel named "Armstrong" or "Electron" would spuriously "match" any query containing "tron" as a mid-word substring.
+- **Country hints**: pulled from bracketed/prefixed/suffixed country codes or full country names in the channel name/`group-title` (e.g. `(NZ)`, `UK:`, `Sky Sports NZ`), then used to boost same-country matches and penalize cross-country name collisions — normalized consistently on both sides (iptv-org's own data uses the literal string `"UK"` as a country value in places, not ISO `"GB"`; comparing a normalized hint against a raw candidate value was silently *penalizing* correct same-country matches until this was fixed).
+- **24/7 detection**: a regex over `24/7`, `24-7`, `nonstop`, `marathon`, `all day`, `loop(ed)` in the name or group. Once flagged, matching switches to scoring against the *cleaned* title only (decoration stripped, including season/episode markers like "Season 6" or "S07") — scoring against the raw name would let a channel literally named "24/7" win by substring containment against every other 24/7-flagged query, which is exactly the failure mode this avoids.
+- **Word-ratio containment, not a flat floor**: a short cleaned title only counts as "contained" in a candidate name when it's a whole word (not, e.g., "Tron" matching mid-word inside "Armstrong"), and the score is the *fraction of the longer name's words* the shorter one accounts for — not a flat "at least 0.65/0.75". A flat floor is exactly what let a channel literally named "Sport" outrank a real identification for "Stan Sport AU Event 1", or a channel named "Band" beat "Band of Brothers": one matching word out of five (or three) is a weak signal, and now scores like one.
+- **Spacing-insensitive equality**: "ITV 1" and "ITV1" collapse to the same alphanumeric string and score as a near-exact match — a common enough M3U-vs-catalog naming difference (space around a trailing number) that it's worth checking for directly rather than relying on token overlap to catch it.
 - **Confidence bar**: general matches need a score ≥0.45–0.48 depending on source; 24/7-flagged matches need ≥0.6, since a wrong identification (wrong poster, wrong logo) is worse than none.
 - **Source prioritization**: a single search can't scan every EPG worker source (there are ~300, and Cloudflare's free-plan subrequest limits cap this at 40 per request) — sources are ranked by whether their host name matches the channel's country hint or name tokens before slicing to the scan limit, so a niche source is more likely to actually get checked.
 

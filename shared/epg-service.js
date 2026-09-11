@@ -1,8 +1,9 @@
 // Orchestration layer: combines shared/core.js (pure logic) with a
-// pluggable async cache adapter and fetch-utils to implement every /api/*
-// route as a plain function returning a plain result object. server.js
-// (Node/Express) and functions/api/*.js (Cloudflare Pages) both call these
-// — only the cache adapter and the thin request/response glue differ.
+// pluggable async cache adapter and fetch-utils to implement every route's
+// actual logic as a plain function returning a plain result object.
+// server.js (Node/Express) and worker.js (Cloudflare Worker) both call
+// these — only the cache adapter and the thin request/response glue
+// differ.
 //
 // Cache adapter shape (all async):
 //   get(name, maxAgeMs) -> parsed value or null if missing/stale
@@ -19,6 +20,7 @@ import {
   buildXmlTv,
   emptyXmlTvStub,
   pickBestName,
+  pickBestLink,
   normalizeWorkerUrl,
   scoreMatch,
   extractCountryHint,
@@ -535,6 +537,196 @@ export async function getHostedFile(store, slugInput, kind) {
   // Published content has no freshness window of its own — it's live
   // until explicitly republished — so always read via getStale.
   return store.getStale(`hosted:${slug}:${kind}`);
+}
+
+// ---- scheduled auto-refresh ------------------------------------------------
+//
+// Lets a published slug keep itself up to date on its own: given an M3U
+// *URL* (not a one-off upload) plus the same match settings as an
+// interactive session, periodically re-fetch, re-match every channel, and
+// re-publish under the same slug. Config is stored via the same
+// hosted-files store, one JSON blob per slug.
+
+const REFRESH_INTERVALS_MS = {
+  '6h': 6 * 60 * 60 * 1000,
+  '12h': 12 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000
+};
+
+export async function saveRefreshConfig(hostedStore, input) {
+  const slug = slugify(input.slug);
+  if (!slug) throw new Error('A valid slug is required.');
+  if (!input.m3uUrl || !input.m3uUrl.trim()) throw new Error('m3uUrl is required.');
+  if (input.intervalKey && !REFRESH_INTERVALS_MS[input.intervalKey]) {
+    throw new Error('intervalKey must be one of: 6h, 12h, 24h.');
+  }
+
+  const existing = await hostedStore.getStale(`refresh-config:${slug}`);
+  const config = {
+    slug,
+    m3uUrl: input.m3uUrl.trim(),
+    customGuideUrl: (input.customGuideUrl || '').trim() || null,
+    intervalKey: input.intervalKey || null,
+    createdAt: existing?.createdAt || Date.now(),
+    lastRunAt: existing?.lastRunAt || null,
+    lastRunStatus: existing?.lastRunStatus || null,
+    lastRunError: existing?.lastRunError || null,
+    lastRunChannelCount: existing?.lastRunChannelCount || null,
+    lastRunGuideCount: existing?.lastRunGuideCount || null,
+    lastRunLogoCount: existing?.lastRunLogoCount || null
+  };
+
+  await hostedStore.set(`refresh-config:${slug}`, config);
+  return config;
+}
+
+export async function getRefreshConfig(hostedStore, slugInput) {
+  const slug = slugify(slugInput);
+  if (!slug) return null;
+  return hostedStore.getStale(`refresh-config:${slug}`);
+}
+
+export function isRefreshDue(config, now = Date.now()) {
+  if (!config || !config.intervalKey) return false;
+  const intervalMs = REFRESH_INTERVALS_MS[config.intervalKey];
+  if (!intervalMs) return false;
+  if (!config.lastRunAt) return true;
+  return now - config.lastRunAt >= intervalMs;
+}
+
+export async function runAutoRefresh(cache, hostedStore, apiKey, config) {
+  try {
+    const m3uText = await fetchTextMaybeGzip(config.m3uUrl);
+    const channels = parseM3U(m3uText);
+
+    const links = [];
+    let guideCount = 0;
+    let logoCount = 0;
+    let failedCount = 0;
+
+    // Bounded concurrency: enough to not take forever on a large lineup,
+    // low enough to stay a reasonable citizen of both the target hosts
+    // and (on Cloudflare) the CPU-time budget for one invocation.
+    await runWithConcurrency(channels, 5, async (channel) => {
+      try {
+        const result = await searchChannel(cache, apiKey, {
+          channelName: channel.name,
+          tvgId: channel.attrs?.['tvg-id'] || '',
+          groupTitle: channel.attrs?.['group-title'] || '',
+          maxSources: MAX_SOURCES_PER_REQUEST,
+          customGuideUrl: config.customGuideUrl || ''
+        });
+
+        const link = pickBestLink(result.matches, channel);
+        if (link) {
+          links.push(link);
+          if (link.canMergeGuide) guideCount += 1;
+          else logoCount += 1;
+        }
+      } catch {
+        failedCount += 1;
+      }
+    });
+
+    const { m3u } = await exportM3u({ channels, links });
+
+    // Group guide-backed links by guideUrl so a shared guide (e.g. one
+    // custom EPG matching most of the lineup) is fetched and parsed once,
+    // not once per channel that happens to resolve to it.
+    const guideGroups = new Map();
+    const identityLinks = [];
+    for (const link of links) {
+      if (link.canMergeGuide && link.guideUrl && link.channelId) {
+        if (!guideGroups.has(link.guideUrl)) guideGroups.set(link.guideUrl, []);
+        guideGroups.get(link.guideUrl).push(link);
+      } else if (link.logoUrl || link.tmdb) {
+        identityLinks.push(link);
+      }
+    }
+
+    const base = parseXmlTv(emptyXmlTvStub()).tv;
+    base.channel = arrify(base.channel);
+    base.programme = arrify(base.programme);
+
+    for (const [guideUrl, guideLinks] of guideGroups) {
+      try {
+        const guideXml = await fetchTextMaybeGzip(guideUrl);
+        const guide = parseXmlTv(guideXml);
+
+        for (const link of guideLinks) {
+          const matchedChannel = guide.channels.find((c) => c.id === link.channelId) ||
+            guide.channels.find((c) => c.names.some((n) => scoreMatch(link.channelName || '', n) > 0.9));
+          if (!matchedChannel) continue;
+
+          const existingIdx = base.channel.findIndex((c) => c['@_id'] === matchedChannel.id);
+          let channelNode;
+          if (existingIdx === -1) {
+            channelNode = matchedChannel.raw;
+            if (!channelNode['display-name']) channelNode['display-name'] = [link.channelName || matchedChannel.id];
+            base.channel.push(channelNode);
+          } else {
+            channelNode = base.channel[existingIdx];
+          }
+          if (link.logoUrl) channelNode.icon = { '@_src': link.logoUrl };
+
+          for (const programme of guide.programmes.filter((p) => p['@_channel'] === matchedChannel.id)) {
+            base.programme.push(programme);
+          }
+        }
+      } catch {
+        failedCount += guideLinks.length;
+      }
+    }
+
+    for (const link of identityLinks) {
+      let channelNode = base.channel.find((c) => c['@_id'] === link.channelId);
+      if (!channelNode) {
+        channelNode = { '@_id': link.channelId, 'display-name': [link.channelName || link.channelId] };
+        base.channel.push(channelNode);
+      }
+      const logoUrl = link.logoUrl || (link.tmdb ? link.tmdb.posterUrl : null);
+      if (logoUrl) channelNode.icon = { '@_src': logoUrl };
+
+      if (link.synthesize) {
+        base.programme = base.programme.filter((p) => p['@_channel'] !== link.channelId);
+        const startDate = new Date();
+        startDate.setUTCHours(0, 0, 0, 0);
+        for (let i = 0; i < 3; i += 1) {
+          const start = new Date(startDate.getTime() + i * 86400000);
+          const stop = new Date(start.getTime() + 86400000);
+          const programme = {
+            '@_channel': link.channelId,
+            '@_start': formatXmltvDate(start),
+            '@_stop': formatXmltvDate(stop),
+            title: [{ '#text': link.tmdb?.title || link.channelName || link.channelId, '@_lang': 'en' }],
+            category: [{ '#text': '24/7', '@_lang': 'en' }]
+          };
+          if (link.tmdb?.overview) programme.desc = [{ '#text': link.tmdb.overview, '@_lang': 'en' }];
+          base.programme.push(programme);
+        }
+      }
+    }
+
+    const mergedXml = buildXmlTv(base);
+    await publishFiles(hostedStore, config.slug, { m3uContent: m3u, xmlContent: mergedXml });
+
+    const updated = {
+      ...config,
+      lastRunAt: Date.now(),
+      lastRunStatus: 'ok',
+      lastRunError: null,
+      lastRunChannelCount: channels.length,
+      lastRunGuideCount: guideCount,
+      lastRunLogoCount: logoCount,
+      lastRunFailedCount: failedCount
+    };
+    await hostedStore.set(`refresh-config:${config.slug}`, updated);
+    return updated;
+  } catch (error) {
+    const updated = { ...config, lastRunAt: Date.now(), lastRunStatus: 'error', lastRunError: error.message };
+    await hostedStore.set(`refresh-config:${config.slug}`, updated);
+    throw error;
+  }
 }
 
 export { slugify };

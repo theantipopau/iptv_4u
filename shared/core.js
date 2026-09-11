@@ -1,7 +1,7 @@
 // Platform-agnostic parsing, scoring, and XMLTV logic — no fs, no Node
 // built-ins, no Express. Shared between the local Node server (server.js)
-// and the Cloudflare Pages Functions (functions/api/*.js) so matching-logic
-// fixes only need to land in one place.
+// and the Cloudflare Worker (worker.js) so matching-logic fixes only need
+// to land in one place.
 
 import { XMLParser, XMLBuilder } from 'fast-xml-parser';
 
@@ -22,6 +22,32 @@ const builder = new XMLBuilder({
 export function arrify(value) {
   if (!value) return [];
   return Array.isArray(value) ? value : [value];
+}
+
+// Given a channel's search-channel match list, pick the best one and turn
+// it into the same "link" shape the frontend builds client-side — used
+// server-side by the auto-refresh pipeline, which has no browser/DOM to
+// run the frontend's copy of this decision in.
+export function pickBestLink(matches, channel) {
+  const best = (matches || [])[0];
+  if (!best) return null;
+
+  const isTmdb = best.sourceType === 'tmdb';
+  const channelId = best.channelId ||
+    (isTmdb ? `tmdb-${slugify(best.tmdb?.title || channel.name)}` : slugify(channel.name));
+
+  return {
+    channelIndex: channel.index,
+    channelId,
+    channelName: best.channelName || channel.name,
+    source: best.source || '',
+    logoUrl: best.logoUrl || null,
+    guideUrl: best.guideUrl || null,
+    canMergeGuide: !!best.canMergeGuide,
+    tmdb: isTmdb ? best.tmdb : null,
+    synthesize: isTmdb && !!best.canSynthesizeGuide,
+    score: typeof best.score === 'number' ? best.score : null
+  };
 }
 
 export function slugify(name) {
@@ -156,30 +182,59 @@ function containsAsWholeWord(haystack, needle) {
   return new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`).test(haystack);
 }
 
+function collapseAlnum(s) {
+  return s.replace(/[^a-z0-9]/g, '');
+}
+
 export function scoreMatch(needle, haystack) {
   const a = (needle || '').toLowerCase().trim();
   const b = (haystack || '').toLowerCase().trim();
   if (!a || !b) return 0;
   if (a === b) return 1;
+
+  // "ITV 1" vs "ITV1", "Sky Sport1" vs "SkySport 1" — a bare spacing
+  // difference around a trailing number is an extremely common naming
+  // variation between an M3U and a catalog, and neither whole-word
+  // containment nor token overlap catches it (the tokens genuinely
+  // differ: "itv"/"1" vs the single token "itv1").
+  const collapsedA = collapseAlnum(a);
+  const collapsedB = collapseAlnum(b);
+  if (collapsedA && collapsedA === collapsedB) return 0.95;
+
+  const tokensA = a.split(/[^a-z0-9]+/).filter(Boolean);
+  const tokensB = b.split(/[^a-z0-9]+/).filter(Boolean);
+  if (tokensA.length === 0 || tokensB.length === 0) return 0;
+
+  const aIsShorter = a.length <= b.length;
+  const shorterStr = aIsShorter ? a : b;
+  const longerStr = aIsShorter ? b : a;
+  const shorterTokens = aIsShorter ? tokensA : tokensB;
+  const longerTokens = aIsShorter ? tokensB : tokensA;
+
   // Containment is only a meaningful signal when the shorter side is a
   // whole word/phrase inside the longer one, not just any substring —
   // otherwise short titles like "Tron" or "Up" spuriously "match" any
   // channel whose name merely contains those letters mid-word (e.g.
-  // "Tron" inside "Armstrong" or "Electron"). Very short candidate names
-  // (e.g. "7", "Her") are excluded outright regardless.
-  if (a.length >= 4 && containsAsWholeWord(b, a)) return Math.max(0.75, a.length / b.length);
-  if (b.length >= 4 && containsAsWholeWord(a, b)) return Math.max(0.65, b.length / a.length);
-
-  const tokensA = new Set(a.split(/[^a-z0-9]+/).filter(Boolean));
-  const tokensB = new Set(b.split(/[^a-z0-9]+/).filter(Boolean));
-  if (tokensA.size === 0 || tokensB.size === 0) return 0;
-
-  let overlap = 0;
-  for (const token of tokensA) {
-    if (tokensB.has(token)) overlap += 1;
+  // "Tron" inside "Armstrong" or "Electron"). Very short strings (under 4
+  // chars, e.g. "7", "Her") are excluded outright regardless.
+  //
+  // The score itself is the *fraction of the longer side's words* the
+  // shorter side accounts for — not a flat "at least 0.65/0.75" floor.
+  // A flat floor is exactly what let a channel literally named "Sport"
+  // outrank a real identification for "Stan Sport AU Event 1", or a
+  // channel named "Band" win over "Band of Brothers" — one matching word
+  // out of five (or three) is a weak signal, not a strong one.
+  if (shorterStr.length >= 4 && containsAsWholeWord(longerStr, shorterStr)) {
+    return shorterTokens.length / longerTokens.length;
   }
 
-  return overlap / Math.max(tokensA.size, tokensB.size);
+  const setB = new Set(tokensB);
+  let overlap = 0;
+  for (const token of tokensA) {
+    if (setB.has(token)) overlap += 1;
+  }
+
+  return overlap / Math.max(tokensA.length, tokensB.length);
 }
 
 const COUNTRY_NAME_MAP = {
@@ -202,7 +257,7 @@ const COUNTRY_NAME_MAP = {
 const COUNTRY_CODE_SET = new Set(['NZ', 'AU', 'GB', 'UK', 'US', 'CA', 'IE', 'ZA', 'IN', 'DE', 'FR', 'ES', 'IT', 'NL']);
 
 function normalizeCountryCode(code) {
-  const upper = code.toUpperCase();
+  const upper = String(code || '').toUpperCase();
   return upper === 'UK' ? 'GB' : upper;
 }
 
@@ -236,7 +291,12 @@ export function extractCountryHint(text) {
 
 export function applyCountryAdjustment(score, queryCountry, candidateCountry) {
   if (!queryCountry || !candidateCountry) return score;
-  if (queryCountry === candidateCountry) return Math.min(1, score + 0.15);
+  // iptv-org's own data literally uses "UK" as a country value in places
+  // (not the ISO "GB" that extractCountryHint normalizes query-side hints
+  // to) — compare through the same normalizer on both sides, or a
+  // same-country candidate scores as a mismatch against itself.
+  const normalizedCandidate = normalizeCountryCode(candidateCountry);
+  if (queryCountry === normalizedCandidate) return Math.min(1, score + 0.15);
   return Math.max(0, score - 0.2);
 }
 
@@ -256,6 +316,13 @@ export function cleanTitleForLookup(name) {
   s = s.replace(/[([][^)\]]*[)\]]/g, ' ');
   s = s.replace(TWENTY_FOUR_SEVEN_REPLACE_RE, ' ');
   s = s.replace(/\b(FHD|UHD|HD|SD|4K|HEVC|H265|H264)\b/gi, ' ');
+  // Season/episode markers ("Season 6", "S07", "S02E05") are decoration
+  // on top of the real title, not part of it — left in, they dilute a
+  // token-ratio match against the plain show name (e.g. "Peppa Pig
+  // Season 6" would otherwise score as only half-matching "Peppa Pig").
+  s = s.replace(/\bseason\s*\d+\b/gi, ' ');
+  s = s.replace(/\bs\d{1,2}(?:e\d{1,3})?\b/gi, ' ');
+  s = s.replace(/\bepisode\s*\d+\b/gi, ' ');
   s = s.replace(/^[A-Za-z]{2,3}\s*[:|-]\s*/, ' ');
   s = s.replace(/[|:_]/g, ' ');
   s = s.replace(/\s+/g, ' ').trim();
