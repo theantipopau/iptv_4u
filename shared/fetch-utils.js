@@ -12,6 +12,49 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
   }
 }
 
+// Cloudflare Workers have a hard per-isolate memory ceiling (~128MB) —
+// a large XMLTV guide parses into an in-memory object graph several
+// times the size of its raw bytes, so a 50MB+ guide crashes the whole
+// Worker invocation outright (opaque Cloudflare error 1102) rather than
+// failing the one request that triggered it. Node has far more headroom
+// and would handle this fine, but the cap is applied on both platforms
+// for one consistent, predictable limit rather than one that silently
+// depends on which backend happens to be running.
+const MAX_FETCH_BYTES = 15 * 1024 * 1024;
+
+async function readWithSizeLimit(response, url) {
+  // Content-Length can be absent (chunked responses) or simply wrong, so
+  // the real enforcement has to happen while streaming, not just as an
+  // upfront header check.
+  const reader = response.body?.getReader();
+  if (!reader) {
+    // No streaming body support — fall back to a single read (still
+    // bounded by the Content-Length check the caller already did).
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > MAX_FETCH_BYTES) {
+      reader.cancel().catch(() => {});
+      throw new Error(`${url} exceeded the ${(MAX_FETCH_BYTES / (1024 * 1024)).toFixed(0)}MB size limit while downloading.`);
+    }
+    chunks.push(value);
+  }
+
+  const combined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return combined;
+}
+
 export async function fetchTextMaybeGzip(url, timeoutMs = 15000) {
   // Ask the server not to transport-compress the response — we only want
   // to decompress genuinely pre-compressed static .gz files below, not
@@ -24,8 +67,12 @@ export async function fetchTextMaybeGzip(url, timeoutMs = 15000) {
     throw new Error(`Failed to fetch ${url}: HTTP ${response.status}`);
   }
 
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = new Uint8Array(arrayBuffer);
+  const declaredLength = Number(response.headers.get('content-length') || 0);
+  if (declaredLength > MAX_FETCH_BYTES) {
+    throw new Error(`${url} is too large to process (${(declaredLength / (1024 * 1024)).toFixed(1)}MB, limit is ${(MAX_FETCH_BYTES / (1024 * 1024)).toFixed(0)}MB).`);
+  }
+
+  const buffer = await readWithSizeLimit(response, url);
   const isGzip =
     url.endsWith('.gz') ||
     response.headers.get('content-encoding') === 'gzip' ||
