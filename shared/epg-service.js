@@ -144,8 +144,12 @@ export async function refreshWorkers(cache, force = false) {
   }
 }
 
+// v2: cached channel entries now carry hasSchedule — bump the key so
+// pre-fix cache entries (which lack that field, reading as falsy) don't
+// masquerade as "no schedule" for up to SOURCE_CHANNELS_MAX_AGE after
+// this shipped, instead of just failing open as no-cache-hit once.
 export async function loadSourceChannels(cache, source) {
-  const cached = await cache.get(`source:${source.id}`, SOURCE_CHANNELS_MAX_AGE);
+  const cached = await cache.get(`source:v2:${source.id}`, SOURCE_CHANNELS_MAX_AGE);
   if (cached && Array.isArray(cached.channels)) return cached.channels;
 
   const xml = await fetchTextMaybeGzip(source.channelsUrl);
@@ -198,7 +202,7 @@ export async function loadSourceChannels(cache, source) {
     });
   }
 
-  await cache.set(`source:${source.id}`, { channels });
+  await cache.set(`source:v2:${source.id}`, { channels });
   return channels;
 }
 
