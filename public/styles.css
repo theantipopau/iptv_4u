@@ -690,6 +690,11 @@ dialog::backdrop {
   text-decoration: underline;
 }
 
+.footer-sep {
+  margin: 0 0.5rem;
+  opacity: 0.5;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     width: 96vw;
