@@ -224,17 +224,44 @@ export function scoreMatch(needle, haystack) {
   // outrank a real identification for "Stan Sport AU Event 1", or a
   // channel named "Band" win over "Band of Brothers" — one matching word
   // out of five (or three) is a weak signal, not a strong one.
+  //
+  // The numerator is generic-word-weighted too, same as the token-overlap
+  // fallback below — otherwise an alt_name like "History Channel
+  // International" fully containing the query "History Channel" (2/3
+  // words) can outscore the actual right channel just named "History"
+  // (1/2 words), purely because "Channel" is a free word to match on.
   if (shorterStr.length >= 4 && containsAsWholeWord(longerStr, shorterStr)) {
-    return shorterTokens.length / longerTokens.length;
+    const matchedWeight = shorterTokens.reduce((sum, t) => sum + genericTokenWeight(t), 0);
+    return matchedWeight / longerTokens.length;
   }
 
   const setB = new Set(tokensB);
   let overlap = 0;
   for (const token of tokensA) {
-    if (setB.has(token)) overlap += 1;
+    if (setB.has(token)) overlap += genericTokenWeight(token);
   }
 
   return overlap / Math.max(tokensA.length, tokensB.length);
+}
+
+// Generic broadcast-industry words (and bare 1-2 digit numbers) are weak
+// evidence on their own — real, unrelated channels collide on exactly
+// these constantly: "Lifetime Network" vs "ACC Network" share only
+// "network"; a Russian channel literally named "Arig Us" and "1 KBR"
+// matched a US ESPN feed and a "Peacock 1" feed purely on the bare
+// tokens "us" and "1". Counted at full weight, a single such word was
+// enough to clear the match threshold. Counted at reduced weight, actual
+// distinctive-word overlap ("fox", "sport", "espn", ...) still works as
+// before, but a lone generic/numeric token no longer does the job alone.
+const GENERIC_BROADCAST_WORDS = new Set([
+  'network', 'channel', 'tv', 'sports', 'sport', 'news', 'live',
+  'plus', 'the', 'and', 'of', 'us', 'uk', 'au', 'nz', 'ca', 'ie'
+]);
+
+function genericTokenWeight(token) {
+  if (GENERIC_BROADCAST_WORDS.has(token)) return 0.25;
+  if (/^\d{1,2}$/.test(token)) return 0.25;
+  return 1;
 }
 
 const COUNTRY_NAME_MAP = {
