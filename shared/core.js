@@ -57,6 +57,19 @@ export function slugify(name) {
     .replace(/^-+|-+$/g, '') || 'channel';
 }
 
+// Accepts one URL per line (or comma-separated) so a user can combine
+// more than one custom guide — e.g. their own provider's EPG plus a
+// region-specific community guide that covers channels the provider's
+// own guide doesn't.
+export function parseCustomGuideUrls(text) {
+  if (!text) return [];
+  const urls = String(text)
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return Array.from(new Set(urls));
+}
+
 export function formatXmltvDate(date) {
   const pad = (n) => String(n).padStart(2, '0');
   return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())} +0000`;

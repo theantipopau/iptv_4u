@@ -27,7 +27,8 @@ import {
   detectTwentyFourSeven,
   cleanTitleForLookup,
   buildLogoMap,
-  searchIptvApi
+  searchIptvApi,
+  parseCustomGuideUrls
 } from './core.js';
 import { fetchWithTimeout, fetchTextMaybeGzip, runWithConcurrency } from './fetch-utils.js';
 
@@ -269,11 +270,14 @@ export async function searchChannel(cache, apiKey, { channelName, tvgId, groupTi
   });
   const sourceSlice = rankedSources.slice(0, requestedCount);
 
-  // A user-supplied EPG (their own provider's guide, say) is a known-good,
-  // exact-fit source for their own lineup — always scan it, on top of the
-  // scan-limited public sources, not instead of one of them.
-  if (customGuideUrl && customGuideUrl.trim()) {
-    const url = customGuideUrl.trim();
+  // User-supplied EPGs (their own provider's guide, a region-specific
+  // community guide, ...) are known-good, exact-fit sources — always
+  // scan all of them, on top of the scan-limited public sources, not
+  // instead of one of them. One per line (or comma-separated) so more
+  // than one can be combined — e.g. a general-lineup guide plus a
+  // region-specific one that covers channels the first doesn't.
+  const customGuideUrls = parseCustomGuideUrls(customGuideUrl);
+  for (const url of customGuideUrls.slice().reverse()) {
     sourceSlice.unshift({ id: `custom:${url}`, name: 'Your EPG', host: 'custom', channelsUrl: url, guideUrl: url });
   }
 

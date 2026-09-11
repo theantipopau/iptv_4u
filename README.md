@@ -99,7 +99,9 @@ Without a key, 24/7 channels are still detected and flagged in the UI — they j
 
 ## Using your own IPTV provider's EPG
 
-Step 2 in the UI has a "Your own EPG/guide URL" field. If your provider gives you an XMLTV guide URL (many do, alongside the M3U), paste it there — it's fetched and matched alongside the public sources on every search/auto-match, no scan-limit applied to it since it's one explicit source, not part of the ~300-host public network. For a provider whose M3U already tags channels with a `tvg-id` that matches this guide's own channel `id`s (common — it's usually the same underlying dataset), this resolves real schedules for nearly every linear channel in one pass, which the sparse public worker network usually can't.
+Step 2 in the UI has a "Your own EPG/guide URL(s)" field — one URL per line (or comma-separated) to combine more than one. If your provider gives you an XMLTV guide URL (many do, alongside the M3U), paste it there — every one listed is fetched and matched alongside the public sources on every search/auto-match, no scan-limit applied since these are explicit sources, not part of the ~300-host public network. For a provider whose M3U already tags channels with a `tvg-id` that matches a guide's own channel `id`s (common — it's usually the same underlying dataset), this resolves real schedules for nearly every linear channel in one pass, which the sparse public worker network usually can't.
+
+Combining more than one is genuinely useful, not just a convenience: a general-lineup guide from your own provider won't necessarily cover a country-specific channel group the way a dedicated regional guide does. For New Zealand specifically, [nzxmltv.github.io](https://nzxmltv.github.io) is a community-maintained, publicly-hosted set of XMLTV guides (Freeview, Sky, Red Bull TV, Pluto TV, ThreeNow) with real per-channel schedules including all of Sky Sport 1-9 — its `sky/guide.xml` is a solid drop-in for NZ Sky Sport channels that a general/US-focused provider guide typically won't have real listings for.
 
 ## Keeping a published playlist fresh automatically
 
