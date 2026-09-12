@@ -229,6 +229,15 @@ function formatLink(link) {
   return `${link.channelId} @ ${link.source || 'unknown'} (logo only)`;
 }
 
+// Green = this channel's EPG will actually populate a schedule on export.
+// Orange = it only has a logo/identity (or a TMDB placeholder guide) — the
+// channels worth clicking into if you want real programme data for them.
+function linkStatusClass(link) {
+  if (!link || link.manual) return '';
+  if (link.canMergeGuide) return 'badge--guide';
+  return 'badge--logo-only';
+}
+
 // 3 = full guide, 2 = logo only / tmdb, 1 = manual, 0 = not linked
 function statusRank(link) {
   if (!link) return 0;
@@ -441,7 +450,7 @@ function renderTable() {
       </td>
       <td class="tvgid-cell"></td>
       <td>
-        <span>${escapeHtml(formatLink(linked))}</span>
+        <span class="link-status ${linkStatusClass(linked)}">${escapeHtml(formatLink(linked))}</span>
       </td>
       <td>${scoreText}</td>
       <td>

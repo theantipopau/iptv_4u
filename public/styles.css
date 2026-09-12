@@ -458,6 +458,19 @@ tbody tr.row-selected {
   color: #0d6b47;
 }
 
+.badge--logo-only {
+  background: #fdf1dc;
+  border-color: #f0cd8f;
+  color: #7a4c00;
+}
+
+.link-status {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
 .logo-wrap {
   position: relative;
   width: 56px;
