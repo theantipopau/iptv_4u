@@ -53,6 +53,7 @@ const el = {
   publishXmlUrl: document.getElementById('publishXmlUrl'),
   copyM3uUrlBtn: document.getElementById('copyM3uUrlBtn'),
   copyXmlUrlBtn: document.getElementById('copyXmlUrlBtn'),
+  watchLiveLink: document.getElementById('watchLiveLink'),
   statsBar: document.getElementById('statsBar'),
   statTotal: document.getElementById('statTotal'),
   statGuide: document.getElementById('statGuide'),
@@ -937,6 +938,7 @@ async function publishHosted() {
     el.publishResult.hidden = false;
     el.publishM3uUrl.value = m3uUrl;
     el.publishXmlUrl.value = xmlUrl;
+    el.watchLiveLink.href = `${location.origin}/watch.html?slug=${encodeURIComponent(result.slug)}`;
     el.publishStatus.textContent = 'Published. Point your IPTV app at these URLs:';
     autosave();
     toast('Published.', 'success');

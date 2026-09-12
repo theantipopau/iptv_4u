@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IPTV 4U — Live Viewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/watch.css" />
+    <link rel="icon" type="image/png" href="/assets/logo.png" />
+  </head>
+  <body>
+    <header class="app-bar">
+      <div class="app-bar-inner">
+        <a class="hero-left" href="/" style="text-decoration:none;color:inherit">
+          <img class="hero-logo" src="/assets/logo.png" alt="IPTV 4U logo" width="40" height="40" />
+          <div>
+            <p class="eyebrow">IPTV 4U</p>
+            <h1>Live Viewer</h1>
+          </div>
+        </a>
+        <div id="channelCountPill" class="stats-bar" hidden>
+          <span class="stat-pill" id="channelCount">0 channels</span>
+        </div>
+        <button id="themeToggle" class="theme-toggle" type="button" title="Toggle dark mode" aria-label="Toggle dark mode">🌓</button>
+      </div>
+    </header>
+
+    <main class="watch-shell">
+      <section id="slugBar" class="card slug-bar">
+        <label>
+          <span>Playlist slug</span>
+          <input id="slugInput" type="text" placeholder="matt" />
+        </label>
+        <button id="loadSlugBtn" class="btn primary">Load</button>
+        <p class="small" id="slugStatus"></p>
+      </section>
+
+      <div id="watchArea" class="watch-area" hidden>
+        <div class="watch-player-col">
+          <div class="player-wrap">
+            <video id="player" controls playsinline></video>
+            <div id="playerOverlay" class="player-overlay" hidden></div>
+          </div>
+          <div class="now-playing">
+            <img id="nowPlayingLogo" class="logo-thumb" alt="" hidden />
+            <div>
+              <h2 id="nowPlayingName">Pick a channel to start watching</h2>
+              <p class="small" id="nowPlayingGroup"></p>
+            </div>
+          </div>
+          <p class="small player-note">If a channel won't play, the provider's stream likely doesn't allow secure/cross-origin browser playback — that's outside this app's control. Try another channel, or use TiviMate for anything that fails here.</p>
+        </div>
+
+        <div class="watch-list-col">
+          <div class="watch-list-toolbar">
+            <input id="channelSearch" type="search" placeholder="Filter channels by name or group…" />
+            <select id="groupFilter"><option value="">All groups</option></select>
+          </div>
+          <ul id="channelList" class="channel-list"></ul>
+        </div>
+      </div>
+    </main>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.17/hls.min.js"></script>
+    <script src="/watch.js"></script>
+  </body>
+</html>
