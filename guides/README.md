@@ -19,3 +19,16 @@ All 10 Sky Sport NZ channels (Sky Sport Select, 1-9, Premier League) filtered ou
 **Use it**: paste `https://raw.githubusercontent.com/theantipopau/iptv_4u/main/guides/au-fox-sports.xml` into the "Your own EPG/guide URL(s)" field, alongside any other guide URLs you're already using.
 
 **Regenerate**: `scripts/trim_au_sports.mjs` (in this repo) re-filters a freshly downloaded `epg_ripper_AU1.xml.gz` down to the same channel id list — see the script for usage.
+
+## uk-major.xml / us-major.xml
+
+Same idea as `au-fox-sports.xml`, for the UK and US. `epgshare01`'s full UK file (`epg_ripper_UK1.xml.gz`) decompresses to ~22MB and its full US file (`epg_ripper_US2.xml.gz`) to ~75MB — both over the 15MB cap — so each is trimmed down to a "greatest hits" set of major national channels instead of the full regional/timezone-duplicated lineup:
+
+- **uk-major.xml** (21 channels, ~2,100 programmes): BBC One (London feed), BBC Two, BBC Four, BBC News, ITV1-4, ITV Quiz, Channel 4 (+Film4/E4/More4), Channel 5, Sky News, and the Sky Sports channels this source happens to carry.
+- **us-major.xml** (38 channels, ~4,300 programmes): the ESPN family, Fox News/Business/Sports-adjacent channels, CNN, MSNBC, and the usual major cable lineup (AMC, Bravo, Comedy Central, Discovery, Disney Channel/Junior/XD, FX/FXX, Hallmark, History, Investigation Discovery, Lifetime, National Geographic, Nickelodeon, Paramount Network, Syfy, TBS, TNT, TLC, truTV, USA, VH1, BET, Cartoon Network).
+
+Neither pretends to be exhaustive — US broadcast network affiliates (ABC/NBC/CBS/FOX) are market-specific in this source with no single canonical id, so they're skipped entirely; ask Claude to add more channels/countries the same way if something you need is missing.
+
+**Use them**: paste `https://raw.githubusercontent.com/theantipopau/iptv_4u/main/guides/uk-major.xml` and/or `.../us-major.xml` into the "Your own EPG/guide URL(s)" field.
+
+**Regenerate**: `scripts/trim_epgshare.mjs` is the generalized version of `trim_au_sports.mjs` — instead of an exhaustive id list, it takes regex patterns on the command line, so re-trimming (or trimming a new country) doesn't require editing a script. See the script's header comment for exact usage. Some `epgshare01` files that fit under the 15MB cap as-is need no trimming at all — e.g. South Africa's `epg_ripper_ZA1.xml.gz` (~2.9MB decompressed, includes the full SuperSport lineup with real schedules) can be pasted directly into the "Your own EPG/guide URL(s)" field with no repo changes.
