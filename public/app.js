@@ -938,7 +938,7 @@ async function publishHosted() {
     el.publishResult.hidden = false;
     el.publishM3uUrl.value = m3uUrl;
     el.publishXmlUrl.value = xmlUrl;
-    el.watchLiveLink.href = `${location.origin}/watch.html?slug=${encodeURIComponent(result.slug)}`;
+    el.watchLiveLink.href = `${location.origin}/watch?slug=${encodeURIComponent(result.slug)}`;
     el.publishStatus.textContent = 'Published. Point your IPTV app at these URLs:';
     autosave();
     toast('Published.', 'success');
