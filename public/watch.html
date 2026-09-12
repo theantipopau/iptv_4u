@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>IPTV 4U — Live Viewer</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -44,11 +44,37 @@
             <video id="player" controls playsinline></video>
             <div id="playerOverlay" class="player-overlay" hidden></div>
           </div>
+          <div class="player-toolbar">
+            <button id="goLiveBtn" class="btn" type="button" title="Jump to the live edge">⏺ Go Live</button>
+            <button id="favBtn" class="btn" type="button" title="Toggle favourite">☆ Favourite</button>
+            <label class="sleep-timer">
+              <span>Sleep</span>
+              <select id="sleepTimer">
+                <option value="0">Off</option>
+                <option value="15">15 min</option>
+                <option value="30">30 min</option>
+                <option value="60">60 min</option>
+              </select>
+            </label>
+          </div>
           <div class="now-playing">
             <img id="nowPlayingLogo" class="logo-thumb" alt="" hidden />
-            <div>
+            <div class="now-playing-info">
               <h2 id="nowPlayingName">Pick a channel to start watching</h2>
               <p class="small" id="nowPlayingGroup"></p>
+              <div id="nowPlayingGuide" class="now-next-block" hidden>
+                <div class="now-next-current">
+                  <span class="now-next-label">Now</span>
+                  <span id="nowPlayingCurrentTitle"></span>
+                  <span id="nowPlayingCurrentTime" class="small"></span>
+                </div>
+                <div class="progress-track"><div id="nowPlayingProgress" class="progress-fill"></div></div>
+                <div class="now-next-next">
+                  <span class="now-next-label">Next</span>
+                  <span id="nowPlayingNextTitle"></span>
+                  <span id="nowPlayingNextTime" class="small"></span>
+                </div>
+              </div>
             </div>
           </div>
           <p class="small player-note">If a channel won't play, the provider's stream likely doesn't allow secure/cross-origin browser playback — that's outside this app's control. Try another channel, or use TiviMate for anything that fails here.</p>
@@ -58,7 +84,9 @@
           <div class="watch-list-toolbar">
             <input id="channelSearch" type="search" placeholder="Filter channels by name or group…" />
             <select id="groupFilter"><option value="">All groups</option></select>
+            <button id="favFilterBtn" class="btn" type="button" title="Show favourites only">★</button>
           </div>
+          <div id="recentRow" class="recent-row" hidden></div>
           <ul id="channelList" class="channel-list"></ul>
         </div>
       </div>

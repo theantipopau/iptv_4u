@@ -153,6 +153,19 @@ Step 5 also has an auto-refresh section: give it an M3U **URL** (instead of just
 - **Cloudflare**: a Cron Trigger (`wrangler.toml`'s `[triggers]`, fires hourly) checks every saved config and runs any that are actually due per their own interval — Cloudflare only supports fixed cron schedules, not one per user, hence the hourly tick + due-check rather than a genuinely per-config schedule.
 - Channels are matched with bounded concurrency (5 at a time) and guide files are fetched once per distinct URL per run (not once per channel that happens to resolve to the same guide) — the config, and cache design generally, are built to keep this from blowing out subrequest/CPU budgets even on large lineups. Very large playlists may still want a paid Workers plan; "Refresh Now" is the way to check before relying on the schedule.
 
+## Watching in the browser
+
+Once a playlist is published (above), `/watch?slug=<slug>` is a mobile-friendly viewer for it — no TiViMate/VLC required for anything that can play directly in a browser. It fetches `/iptv/<slug>.m3u` (and `/epg/<slug>.xml`, if one was published too) client-side; there's no server-side relay or proxy, so playback only works for streams the *browser itself* can reach and decode directly.
+
+- **Channel list**: searchable, filterable by `group-title`, shows each channel's logo, number (`tvg-chno`, if your M3U has it), and — if a guide was published — its current programme inline.
+- **Now/next guide**: above the player, the actively-playing channel's current programme (with a live progress bar) and next programme, computed client-side from the published XMLTV — handles missing `stop` times and DST-affected offsets the same way the server-side guide merge does.
+- **Favourites and recently watched**: a star toggle per channel and a horizontal recent-channels row, both persisted in `localStorage` per slug.
+- **Sleep timer** and a **"Go Live"** button (jumps back to the live edge if you've paused/seeked).
+- **Playback pipeline**: native HLS (Safari/iOS) → [hls.js](https://github.com/video-dev/hls.js) for `.m3u8` elsewhere → [mpegts.js](https://github.com/xqq/mpegts.js) for raw MPEG-TS streams (the common case for most IPTV playlists — no `.m3u8` manifest at all, just a continuous stream, which browsers can't decode natively). If a stream is plain `http://` and the site is HTTPS, it first tries the same URL with `https://` substituted (some providers happen to serve both, silently) before explaining that mixed content is blocked — that specific case is the one thing this can't route around client-side.
+- **Errors are specific, not just "failed to play"**: hls.js/mpegts.js report a stable failure reason (unreachable, timed out, unsupported codec, encrypted, ...) which gets translated into a plain-language message, plus a 15s watchdog so a stream that neither errors nor starts doesn't leave "Loading…" up forever.
+
+**Known limitation, not fixable client-side**: a stream whose server doesn't allow cross-origin browser access, or that's HTTP-only with no HTTPS equivalent, won't play here even though it works fine in TiviMate/VLC — those aren't bound by the browser sandbox this viewer runs in. There's no server-side relay/transcode in this app (deliberately — that's a real cost/infrastructure commitment for a Cloudflare Workers free-tier deployment, not something to add silently); TiviMate remains the reliable fallback for anything that hits this wall.
+
 ## How matching actually works
 
 - **Exact `tvg-id`**: if your M3U already carries a `tvg-id` that matches a known source's channel id (including your own custom guide, if you've set one), that's scored 1.0 and wins outright.
