@@ -47,7 +47,30 @@ const state = {
   channels: [],
   activeIndex: null,
   hls: null,
-  mpegts: null
+  mpegts: null,
+  watchdogTimer: null
+};
+
+// hls.js reports a stable `details` code on every error — translate the
+// common fatal ones into a message a viewer (not an engineer) can act on,
+// instead of one generic "failed to play" for every cause.
+const HLS_ERROR_MESSAGES = {
+  manifestLoadError: "Couldn't reach this channel — its stream may be offline, or its server may not allow browser playback.",
+  manifestLoadTimeOut: 'Timed out waiting for this channel to respond.',
+  manifestParsingError: "This channel's stream data could not be understood by this browser.",
+  levelLoadError: "Couldn't load this channel's stream data.",
+  levelLoadTimeOut: "Timed out loading this channel's stream data.",
+  fragLoadError: 'Lost connection to the stream partway through.',
+  fragLoadTimeOut: 'Timed out loading part of the stream.',
+  bufferAddCodecError: "This channel's video or audio format isn't supported by this browser.",
+  bufferIncompatibleCodecsError: "This channel's video or audio format isn't supported by this browser.",
+  keyLoadError: 'This stream is encrypted and the decryption key could not be loaded.',
+  keySystemNoKeys: "This stream uses DRM this browser can't decode."
+};
+
+const MPEGTS_ERROR_MESSAGES = {
+  NetworkError: "Couldn't reach this channel — its stream may be offline, or its server may not allow browser playback.",
+  MediaError: "This channel's video or audio format isn't supported by this browser."
 };
 
 function escapeHtml(value) {
@@ -103,7 +126,15 @@ function setOverlay(message) {
   el.playerOverlay.textContent = message;
 }
 
+function clearWatchdog() {
+  if (state.watchdogTimer) {
+    clearTimeout(state.watchdogTimer);
+    state.watchdogTimer = null;
+  }
+}
+
 function destroyPlayer() {
+  clearWatchdog();
   if (state.hls) {
     state.hls.destroy();
     state.hls = null;
@@ -122,9 +153,73 @@ function destroyPlayer() {
   el.player.load();
 }
 
+const WATCHDOG_MS = 15000;
+const MIXED_CONTENT_MESSAGE = "This stream is HTTP-only, and browsers block insecure video on a secure (HTTPS) page like this one — that's a limitation of the provider, not this app. It may still work in TiviMate, or if you self-host this app locally over HTTP.";
+
+// A plain-http stream on an https page is blocked outright by the
+// browser's mixed-content policy — but some providers happen to also
+// serve the identical stream over https on the same host (never updated
+// in the M3U itself), so it's worth a free, no-server-involved attempt
+// before giving up with an explanation.
+function attemptPlayback(url, { isUpgradeAttempt = false } = {}) {
+  destroyPlayer();
+  setOverlay(isUpgradeAttempt ? 'Loading… (trying a secure version of this stream)' : 'Loading…');
+
+  const settle = (message) => {
+    clearWatchdog();
+    if (message) {
+      setOverlay(isUpgradeAttempt ? MIXED_CONTENT_MESSAGE : message);
+    } else {
+      setOverlay(null);
+    }
+  };
+
+  state.watchdogTimer = setTimeout(() => {
+    settle('Timed out waiting for this channel to respond.');
+  }, WATCHDOG_MS);
+
+  const isHls = /\.m3u8?(\?|$)/i.test(url);
+
+  if (isHls && window.Hls && window.Hls.isSupported()) {
+    const hls = new window.Hls({ enableWorker: true });
+    state.hls = hls;
+    hls.on(window.Hls.Events.ERROR, (_evt, data) => {
+      if (data.fatal) settle(HLS_ERROR_MESSAGES[data.details] || "This channel failed to play — the stream may be offline, or its server may not allow browser playback.");
+    });
+    hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+      settle(null);
+      el.player.play().catch(() => {});
+    });
+    hls.loadSource(url);
+    hls.attachMedia(el.player);
+  } else if (isHls) {
+    // Native HLS (Safari/iOS) — no hls.js involved.
+    el.player.src = url;
+    el.player.oncanplay = () => settle(null);
+    el.player.onerror = () => settle("This channel failed to play — the stream may be offline, or its server may not allow browser playback.");
+    el.player.play().catch(() => {});
+  } else if (window.mpegts && window.mpegts.isSupported()) {
+    // Most IPTV playlists serve a continuous raw MPEG-TS stream (no
+    // .m3u8 manifest at all) rather than real HLS — browsers can't play
+    // that container natively, so it needs mpegts.js's MSE remuxer.
+    const player = window.mpegts.createPlayer({ type: 'mpegts', isLive: true, url });
+    state.mpegts = player;
+    player.on(window.mpegts.Events.ERROR, (_type, detail) => {
+      settle(MPEGTS_ERROR_MESSAGES[detail] || "This channel failed to play — the stream may be offline, or its server may not allow browser playback.");
+    });
+    player.attachMediaElement(el.player);
+    player.load();
+    player.play().then(() => settle(null)).catch(() => {});
+  } else {
+    el.player.src = url;
+    el.player.oncanplay = () => settle(null);
+    el.player.onerror = () => settle("This channel failed to play — the stream may be offline, or its server may not allow browser playback.");
+    el.player.play().catch(() => {});
+  }
+}
+
 function playChannel(channel) {
   state.activeIndex = channel.index;
-  destroyPlayer();
 
   el.nowPlayingName.textContent = channel.name;
   el.nowPlayingGroup.textContent = channel.attrs['group-title'] || '';
@@ -137,60 +232,10 @@ function playChannel(channel) {
   }
 
   const url = channel.url;
-
-  // A plain-http stream loaded from an https page is blocked outright by
-  // the browser's mixed-content policy (or silently upgraded to https by
-  // the browser first, which then fails if the provider doesn't actually
-  // serve https on that path) — no client-side workaround exists for
-  // this, so say so immediately instead of a generic playback error.
-  if (location.protocol === 'https:' && url.startsWith('http://')) {
-    setOverlay('This stream is HTTP-only, and browsers block insecure video on a secure (HTTPS) page like this one — that\'s a limitation of the provider, not this app. It may still work in TiviMate, or if you self-host this app locally over HTTP.');
-    renderChannelList();
-    return;
-  }
-
-  const isHls = /\.m3u8?(\?|$)/i.test(url);
-
-  const onError = (detail) => {
-    setOverlay(`This channel failed to play${detail ? ` (${detail})` : ''} — the stream may be offline, or its server may not allow cross-origin browser playback.`);
-  };
-
-  setOverlay('Loading…');
-
-  if (isHls && window.Hls && window.Hls.isSupported()) {
-    const hls = new window.Hls({ enableWorker: true });
-    state.hls = hls;
-    hls.on(window.Hls.Events.ERROR, (_evt, data) => {
-      if (data.fatal) onError(data.details);
-    });
-    hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
-      setOverlay(null);
-      el.player.play().catch(() => {});
-    });
-    hls.loadSource(url);
-    hls.attachMedia(el.player);
-  } else if (isHls) {
-    // Native HLS (Safari/iOS) — no hls.js involved.
-    el.player.src = url;
-    el.player.oncanplay = () => setOverlay(null);
-    el.player.onerror = () => onError();
-    el.player.play().catch(() => {});
-  } else if (window.mpegts && window.mpegts.isSupported()) {
-    // Most IPTV playlists serve a continuous raw MPEG-TS stream (no
-    // .m3u8 manifest at all) rather than real HLS — browsers can't play
-    // that container natively, so it needs mpegts.js's MSE remuxer.
-    const player = window.mpegts.createPlayer({ type: 'mpegts', isLive: true, url });
-    state.mpegts = player;
-    player.on(window.mpegts.Events.ERROR, (_type, detail) => onError(detail));
-    player.attachMediaElement(el.player);
-    player.load();
-    player.play().then(() => setOverlay(null)).catch(() => {});
-  } else {
-    el.player.src = url;
-    el.player.oncanplay = () => setOverlay(null);
-    el.player.onerror = () => onError();
-    el.player.play().catch(() => {});
-  }
+  const needsHttpsAttempt = location.protocol === 'https:' && url.startsWith('http://');
+  attemptPlayback(needsHttpsAttempt ? url.replace(/^http:\/\//, 'https://') : url, {
+    isUpgradeAttempt: needsHttpsAttempt
+  });
 
   renderChannelList();
   try {
