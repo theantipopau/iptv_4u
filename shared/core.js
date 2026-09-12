@@ -461,7 +461,12 @@ const KNOWN_ALT_NAMES = {
   'FoxLeague.au': ['Fox Sports 2', 'Fox Sports 502', 'Kayo League'],
   'FoxFooty.au': ['Fox Sports 4', 'Fox Sports 504', 'Kayo Footy'],
   'FoxSportsNews.au': ['Kayo Sports News'],
-  'FoxSportsMorePlus.au': ['Fox Sports 507', 'Fox Sports More', 'Kayo Sports More']
+  'FoxSportsMorePlus.au': ['Fox Sports 507', 'Fox Sports More', 'Kayo Sports More'],
+  // DStv channel 236: the catalog's own name ("WWE Channel Africa") only
+  // shares one word with either the DStv guide's name ("SuperSport WWE")
+  // or its own on-screen name ("WWE Channel") — both score just under the
+  // confidence threshold without this.
+  'WWEChannelAfrica.za': ['SuperSport WWE', 'WWE Channel']
 };
 
 export function searchIptvApi(query, cleanedQuery, isTwentyFourSeven, channels, guides, logoMap, queryCountry) {
