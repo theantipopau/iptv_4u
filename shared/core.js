@@ -448,6 +448,22 @@ export function buildLogoMap(logos) {
   return out;
 }
 
+// iptv-org's public catalog carries alt_names for some rebranded channels
+// but not others — e.g. FoxCricket.au already lists "Fox Sports 501" as an
+// alt_name, but FoxLeague.au and FoxFooty.au (the same Foxtel numbering
+// scheme, channels 502/504) have none at all, so an M3U entry literally
+// named "Fox Sports 502" or "Fox Sports 4" had nothing to match against.
+// Kayo Sports (a separate streaming platform) carries the identical
+// channels under its own branding on top of that. Confirmed against the
+// live catalog and Foxtel/Kayo's own published channel numbering.
+const KNOWN_ALT_NAMES = {
+  'FoxCricket.au': ['Kayo Cricket'],
+  'FoxLeague.au': ['Fox Sports 2', 'Fox Sports 502', 'Kayo League'],
+  'FoxFooty.au': ['Fox Sports 4', 'Fox Sports 504', 'Kayo Footy'],
+  'FoxSportsNews.au': ['Kayo Sports News'],
+  'FoxSportsMorePlus.au': ['Fox Sports 507', 'Fox Sports More', 'Kayo Sports More']
+};
+
 export function searchIptvApi(query, cleanedQuery, isTwentyFourSeven, channels, guides, logoMap, queryCountry) {
   const byChannelId = new Map();
   for (const guide of guides) {
@@ -471,7 +487,8 @@ export function searchIptvApi(query, cleanedQuery, isTwentyFourSeven, channels, 
     if (!isTwentyFourSeven) {
       score = Math.max(score, scoreMatch(query, channel.name));
     }
-    for (const alt of channel.alt_names || []) {
+    const allAltNames = [...(channel.alt_names || []), ...(KNOWN_ALT_NAMES[channel.id] || [])];
+    for (const alt of allAltNames) {
       score = Math.max(score, scoreMatch(cleanedQuery, alt));
       if (!isTwentyFourSeven) {
         score = Math.max(score, scoreMatch(query, alt));
