@@ -28,6 +28,7 @@ import {
   cleanTitleForLookup,
   buildLogoMap,
   searchIptvApi,
+  matchAliasRegistry,
   parseCustomGuideUrls
 } from './core.js';
 import { fetchWithTimeout, fetchTextMaybeGzip, runWithConcurrency } from './fetch-utils.js';
@@ -348,8 +349,13 @@ export async function searchChannel(cache, apiKey, { channelName, tvgId, groupTi
 
   const iptv = await refreshIptvApi(cache, false);
   const apiMatches = searchIptvApi(channelName, cleanedTitle, isTwentyFourSeven, iptv.channels, iptv.guides, iptv.logoMap || {}, countryHint);
+  // Identifies channels the alias registry knows about but iptv-org's own
+  // catalog doesn't carry at all (e.g. ESPN.nz — confirmed absent
+  // upstream) — apiMatches alone could never surface these since there's
+  // no catalog channel for an alt_name to attach to in the first place.
+  const registryMatches = matchAliasRegistry(channelName, cleanedTitle, isTwentyFourSeven, countryHint);
 
-  const all = [...workerMatches, ...apiMatches]
+  const all = [...workerMatches, ...apiMatches, ...registryMatches]
     .sort((a, b) => b.score - a.score)
     .slice(0, 35);
 

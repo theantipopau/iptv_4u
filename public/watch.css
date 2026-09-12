@@ -1,3 +1,11 @@
+.offline-banner {
+  background: var(--danger);
+  color: #fff;
+  text-align: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+}
+
 .watch-shell {
   width: min(1400px, 96vw);
   margin: 1.5rem auto 3rem;
@@ -373,5 +381,63 @@
 
   .channel-list {
     max-height: 70vh;
+  }
+}
+
+.diagnostics-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  padding: 0.5rem 0.75rem;
+}
+
+.diagnostics-panel summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.diagnostics-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.75rem;
+  font-size: 0.78rem;
+  font-family: "IBM Plex Mono", monospace;
+  margin: 0.5rem 0;
+}
+
+.diagnostics-list dt {
+  color: var(--muted);
+}
+
+.diagnostics-list dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+#copyDiagnosticBtn {
+  min-height: 40px;
+}
+
+/* Keyboard accessibility: a visible focus ring on every interactive
+   element in the viewer, not just the browser's (inconsistent) default. */
+.channel-row:focus-visible,
+.channel-row-fav:focus-visible,
+.btn:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[data-index]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
   }
 }

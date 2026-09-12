@@ -1,3 +1,20 @@
+import {
+  parseM3U,
+  channelKey,
+  parseGuideForNowNext,
+  getNowNext,
+  formatTime,
+  pushRecent as pushRecentKey,
+  pruneStaleKeys,
+  isMixedContentCandidate,
+  buildHttpsUpgradeUrl,
+  redactUrl,
+  redactHost,
+  classifyStreamType,
+  classifyPlaybackError,
+  ERROR_MESSAGES
+} from './watch-core.js';
+
 const THEME_KEY = 'iptv4u_theme_v1';
 
 function initTheme() {
@@ -25,6 +42,18 @@ document.getElementById('themeToggle').addEventListener('click', () => {
 
 initTheme();
 
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+}
+
+function updateOfflineBanner() {
+  const banner = document.getElementById('offlineBanner');
+  if (banner) banner.hidden = navigator.onLine;
+}
+window.addEventListener('online', updateOfflineBanner);
+window.addEventListener('offline', updateOfflineBanner);
+updateOfflineBanner();
+
 const el = {
   slugInput: document.getElementById('slugInput'),
   loadSlugBtn: document.getElementById('loadSlugBtn'),
@@ -50,7 +79,10 @@ const el = {
   nowPlayingCurrentTime: document.getElementById('nowPlayingCurrentTime'),
   nowPlayingProgress: document.getElementById('nowPlayingProgress'),
   nowPlayingNextTitle: document.getElementById('nowPlayingNextTitle'),
-  nowPlayingNextTime: document.getElementById('nowPlayingNextTime')
+  nowPlayingNextTime: document.getElementById('nowPlayingNextTime'),
+  diagnosticsList: document.getElementById('diagnosticsList'),
+  copyDiagnosticBtn: document.getElementById('copyDiagnosticBtn'),
+  copyDiagnosticStatus: document.getElementById('copyDiagnosticStatus')
 };
 
 const state = {
@@ -60,40 +92,15 @@ const state = {
   hls: null,
   mpegts: null,
   watchdogTimer: null,
+  attemptId: 0, // monotonically increasing — guards every async callback below
+  status: 'idle', // idle | loading | playing | buffering | reconnecting | paused | ended | failed
+  diagnostics: null,
   guide: new Map(), // channel id (tvg-id) -> sorted programme list
   favorites: new Set(),
   recents: [],
   favoritesOnly: false,
   sleepTimerHandle: null,
   nowNextInterval: null
-};
-
-// A stable identity for favourites/recents that survives a re-publish
-// changing the channel order — prefer the EPG id, fall back to the name.
-function channelKey(channel) {
-  return channel.attrs['tvg-id'] || channel.name;
-}
-
-// hls.js reports a stable `details` code on every error — translate the
-// common fatal ones into a message a viewer (not an engineer) can act on,
-// instead of one generic "failed to play" for every cause.
-const HLS_ERROR_MESSAGES = {
-  manifestLoadError: "Couldn't reach this channel — its stream may be offline, or its server may not allow browser playback.",
-  manifestLoadTimeOut: 'Timed out waiting for this channel to respond.',
-  manifestParsingError: "This channel's stream data could not be understood by this browser.",
-  levelLoadError: "Couldn't load this channel's stream data.",
-  levelLoadTimeOut: "Timed out loading this channel's stream data.",
-  fragLoadError: 'Lost connection to the stream partway through.',
-  fragLoadTimeOut: 'Timed out loading part of the stream.',
-  bufferAddCodecError: "This channel's video or audio format isn't supported by this browser.",
-  bufferIncompatibleCodecsError: "This channel's video or audio format isn't supported by this browser.",
-  keyLoadError: 'This stream is encrypted and the decryption key could not be loaded.',
-  keySystemNoKeys: "This stream uses DRM this browser can't decode."
-};
-
-const MPEGTS_ERROR_MESSAGES = {
-  NetworkError: "Couldn't reach this channel — its stream may be offline, or its server may not allow browser playback.",
-  MediaError: "This channel's video or audio format isn't supported by this browser."
 };
 
 function escapeHtml(value) {
@@ -103,102 +110,6 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
-}
-
-// Mirrors shared/core.js's parseM3U closely enough for display/playback
-// purposes — this page only ever reads an already-published playlist, it
-// never needs to round-trip or re-serialize it.
-function parseM3U(text) {
-  const lines = text.split(/\r?\n/);
-  const channels = [];
-  let pending = null;
-
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line) continue;
-
-    if (line.startsWith('#EXTINF')) {
-      const attrs = {};
-      for (const match of line.matchAll(/([\w-]+)="([^"]*)"/g)) {
-        attrs[match[1]] = match[2];
-      }
-      const commaIdx = line.indexOf(',');
-      const name = commaIdx >= 0 ? line.slice(commaIdx + 1).trim() : `Channel ${channels.length + 1}`;
-      pending = { index: channels.length, name, attrs, url: '' };
-      continue;
-    }
-
-    if (pending && !line.startsWith('#')) {
-      pending.url = line;
-      channels.push(pending);
-      pending = null;
-    }
-  }
-
-  if (pending) channels.push(pending);
-  return channels;
-}
-
-// XMLTV timestamps look like "20260912040000 +0700" — a fixed-width
-// date/time plus an optional UTC offset (no offset means UTC).
-function parseXmltvDate(str) {
-  if (!str) return null;
-  const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s*([+-]\d{4})?$/.exec(str.trim());
-  if (!m) return null;
-  const [, y, mo, d, h, mi, s, tz] = m;
-  const iso = `${y}-${mo}-${d}T${h}:${mi}:${s}${tz ? `${tz.slice(0, 3)}:${tz.slice(3)}` : 'Z'}`;
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-// A compact now/next index, keyed by XMLTV channel id — parses the
-// published guide once at load time using the browser's built-in
-// DOMParser (no bundling needed), not on every render.
-function parseGuideForNowNext(xmlText) {
-  const guide = new Map();
-  let doc;
-  try {
-    doc = new DOMParser().parseFromString(xmlText, 'application/xml');
-    if (doc.querySelector('parsererror')) return guide;
-  } catch {
-    return guide;
-  }
-
-  doc.querySelectorAll('programme').forEach((node) => {
-    const channelId = node.getAttribute('channel');
-    const start = parseXmltvDate(node.getAttribute('start'));
-    if (!channelId || !start) return;
-    const stop = parseXmltvDate(node.getAttribute('stop'));
-    const titleNode = node.querySelector('title');
-    const title = titleNode ? titleNode.textContent.trim() : '';
-    if (!guide.has(channelId)) guide.set(channelId, []);
-    guide.get(channelId).push({ start, stop, title });
-  });
-
-  for (const list of guide.values()) list.sort((a, b) => a.start - b.start);
-  return guide;
-}
-
-// Missing stop times are handled the same way core.js's server-side
-// guide merge does — the next programme's start becomes the effective
-// stop, and only the last item in the list is genuinely open-ended.
-function getNowNext(channelId, now = new Date()) {
-  const list = state.guide.get(channelId);
-  if (!list || !list.length) return { current: null, next: null };
-
-  for (let i = 0; i < list.length; i += 1) {
-    const p = list[i];
-    if (p.start > now) return { current: null, next: p };
-    const effectiveStop = p.stop || (list[i + 1] ? list[i + 1].start : null);
-    if (!effectiveStop || now < effectiveStop) {
-      return { current: p, next: list[i + 1] || null };
-    }
-  }
-  return { current: null, next: null };
-}
-
-function formatTime(date) {
-  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
 function setOverlay(message) {
@@ -218,7 +129,13 @@ function clearWatchdog() {
   }
 }
 
+// Tears down whichever player is active and bumps the attempt id, so any
+// event a soon-to-be-destroyed hls.js/mpegts.js instance fires afterward
+// (its own destroy() is not guaranteed instantaneous for every in-flight
+// callback) is recognized as stale and ignored rather than mutating the
+// UI for a channel the viewer already navigated away from.
 function destroyPlayer() {
+  state.attemptId += 1;
   clearWatchdog();
   if (state.hls) {
     state.hls.destroy();
@@ -235,77 +152,259 @@ function destroyPlayer() {
   el.player.removeAttribute('src');
   el.player.oncanplay = null;
   el.player.onerror = null;
+  el.player.onwaiting = null;
+  el.player.onplaying = null;
+  el.player.onpause = null;
+  el.player.onended = null;
   el.player.load();
 }
 
-const WATCHDOG_MS = 15000;
-const MIXED_CONTENT_MESSAGE = "This stream is HTTP-only, and browsers block insecure video on a secure (HTTPS) page like this one — that's a limitation of the provider, not this app. It may still work in TiviMate, or if you self-host this app locally over HTTP.";
+function renderDiagnostics() {
+  const d = state.diagnostics;
+  if (!d) {
+    el.diagnosticsList.innerHTML = '<dt>Status</dt><dd>No channel selected yet.</dd>';
+    return;
+  }
+  const rows = [
+    ['Channel', d.channelName || ''],
+    ['Host', d.host || ''],
+    ['Scheme', d.scheme || ''],
+    ['Delivery', d.delivery || ''],
+    ['Content-Type', d.contentType || '(unverified — blocked from browser inspection)'],
+    ['Playback strategy', d.strategy || ''],
+    ['HTTPS upgrade attempted', d.httpsUpgradeAttempted ? 'yes' : 'no'],
+    ['HTTPS upgrade succeeded', d.httpsUpgradeAttempted ? (d.httpsUpgradeSucceeded ? 'yes' : 'no') : 'n/a'],
+    ['Status', d.status || ''],
+    ['Failure category', d.failureCategory || 'none'],
+    ['Detail (redacted)', d.detail || 'none'],
+    ['Timestamp', d.timestamp || '']
+  ];
+  el.diagnosticsList.innerHTML = rows.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`).join('');
+}
 
-// A plain-http stream on an https page is blocked outright by the
-// browser's mixed-content policy — but some providers happen to also
-// serve the identical stream over https on the same host (never updated
-// in the M3U itself), so it's worth a free, no-server-involved attempt
-// before giving up with an explanation.
-function attemptPlayback(url, { isUpgradeAttempt = false } = {}) {
+function setStatus(status, { category = null, detail = null } = {}) {
+  state.status = status;
+  if (state.diagnostics) {
+    state.diagnostics.status = status;
+    state.diagnostics.failureCategory = category;
+    state.diagnostics.detail = detail ? redactUrl(String(detail)) || String(detail).slice(0, 200) : null;
+    state.diagnostics.timestamp = new Date().toISOString();
+  }
+  renderDiagnostics();
+}
+
+el.copyDiagnosticBtn.addEventListener('click', async () => {
+  const d = state.diagnostics;
+  const lines = d
+    ? [
+        `channel: ${d.channelName || ''}`,
+        `host: ${d.host || ''}`,
+        `scheme: ${d.scheme || ''}`,
+        `delivery: ${d.delivery || ''}`,
+        `contentType: ${d.contentType || 'unverified'}`,
+        `strategy: ${d.strategy || ''}`,
+        `httpsUpgradeAttempted: ${d.httpsUpgradeAttempted}`,
+        `httpsUpgradeSucceeded: ${d.httpsUpgradeAttempted ? d.httpsUpgradeSucceeded : 'n/a'}`,
+        `status: ${d.status || ''}`,
+        `failureCategory: ${d.failureCategory || 'none'}`,
+        `detail: ${d.detail || 'none'}`,
+        `timestamp: ${d.timestamp || ''}`
+      ]
+    : ['No channel selected yet.'];
+  // Deliberately excludes: full stream URL, query string, any header,
+  // cookie, token, username or password — only a redacted host+path (see
+  // watch-core.js's redactUrl) ever appears above.
+  const text = lines.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    el.copyDiagnosticStatus.textContent = 'Copied.';
+  } catch {
+    el.copyDiagnosticStatus.textContent = text;
+  }
+  setTimeout(() => {
+    el.copyDiagnosticStatus.textContent = '';
+  }, 4000);
+});
+
+const WATCHDOG_MS = 15000;
+
+function attemptPlayback(url, { isUpgradeAttempt = false, originalUrl = url, channelName = '' } = {}) {
   destroyPlayer();
+  const myAttempt = state.attemptId;
+  const isStale = () => myAttempt !== state.attemptId;
+
+  state.diagnostics = {
+    channelName,
+    host: redactHost(originalUrl),
+    scheme: (originalUrl.match(/^([a-z]+):/i) || [])[1] || '',
+    delivery: null,
+    contentType: null,
+    strategy: null,
+    httpsUpgradeAttempted: isUpgradeAttempt,
+    httpsUpgradeSucceeded: null,
+    status: 'loading',
+    failureCategory: null,
+    detail: null,
+    timestamp: new Date().toISOString()
+  };
+
+  setStatus('loading');
   setOverlay(isUpgradeAttempt ? 'Loading… (trying a secure version of this stream)' : 'Loading…');
 
-  const settle = (message) => {
+  const fail = (category, detail) => {
+    if (isStale()) return;
     clearWatchdog();
-    if (message) {
-      setOverlay(isUpgradeAttempt ? MIXED_CONTENT_MESSAGE : message);
-    } else {
-      setOverlay(null);
+    if (isUpgradeAttempt) {
+      state.diagnostics.httpsUpgradeSucceeded = false;
+      setStatus('failed', { category: 'HTTPS_UPGRADE_FAILED', detail });
+      setOverlay(ERROR_MESSAGES.HTTPS_UPGRADE_FAILED);
+      return;
     }
+    setStatus('failed', { category, detail });
+    setOverlay(ERROR_MESSAGES[category] || ERROR_MESSAGES.UNKNOWN);
+  };
+
+  const succeed = () => {
+    if (isStale()) return;
+    clearWatchdog();
+    if (isUpgradeAttempt) state.diagnostics.httpsUpgradeSucceeded = true;
+    setStatus('playing');
+    setOverlay(null);
   };
 
   state.watchdogTimer = setTimeout(() => {
-    settle('Timed out waiting for this channel to respond.');
+    if (isStale()) return;
+    const { category } = classifyPlaybackError({ source: 'watchdog' });
+    fail(category, 'watchdog-timeout');
   }, WATCHDOG_MS);
 
+  const playSafely = () => {
+    el.player.play().catch((error) => {
+      if (isStale()) return;
+      if (error && error.name === 'NotAllowedError') {
+        clearWatchdog();
+        setStatus('paused', { category: 'AUTOPLAY_BLOCKED' });
+        setOverlay(ERROR_MESSAGES.AUTOPLAY_BLOCKED);
+      }
+      // Other rejection reasons (e.g. aborted by a fast channel switch)
+      // are expected and not worth surfacing as a failure.
+    });
+  };
+
+  el.player.onwaiting = () => {
+    if (isStale() || state.status === 'failed') return;
+    setStatus('buffering');
+  };
+  el.player.onplaying = () => {
+    if (isStale()) return;
+    setStatus('playing');
+  };
+  el.player.onended = () => {
+    if (isStale()) return;
+    setStatus('ended');
+  };
+
   const isHls = /\.m3u8?(\?|$)/i.test(url);
+  state.diagnostics.delivery = classifyStreamType(url, '');
 
   if (isHls && window.Hls && window.Hls.isSupported()) {
+    state.diagnostics.strategy = 'hls.js';
     const hls = new window.Hls({ enableWorker: true });
     state.hls = hls;
+
+    // hls.js already retries recoverable network/media errors internally
+    // with its own bounded backoff — only a `fatal` error means it gave
+    // up, which is the only case that should reach the viewer.
     hls.on(window.Hls.Events.ERROR, (_evt, data) => {
-      if (data.fatal) settle(HLS_ERROR_MESSAGES[data.details] || "This channel failed to play — the stream may be offline, or its server may not allow browser playback.");
+      if (isStale() || !data.fatal) return;
+      const { category } = classifyPlaybackError({ source: 'hls', detail: data.details, isUpgradeAttempt });
+      fail(category, data.details);
     });
-    hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
-      settle(null);
-      el.player.play().catch(() => {});
+    hls.on(window.Hls.Events.MANIFEST_PARSED, (_evt, data) => {
+      if (isStale()) return;
+      state.diagnostics.contentType = 'application/vnd.apple.mpegurl (parsed)';
+      if (Array.isArray(data?.levels)) {
+        state.diagnostics.levelCount = data.levels.length;
+      }
+      succeed();
+      playSafely();
     });
     hls.loadSource(url);
     hls.attachMedia(el.player);
   } else if (isHls) {
     // Native HLS (Safari/iOS) — no hls.js involved.
+    state.diagnostics.strategy = 'native';
     el.player.src = url;
-    el.player.oncanplay = () => settle(null);
-    el.player.onerror = () => settle("This channel failed to play — the stream may be offline, or its server may not allow browser playback.");
-    el.player.play().catch(() => {});
+    el.player.oncanplay = () => succeed();
+    el.player.onerror = () => {
+      const code = el.player.error ? el.player.error.code : null;
+      const { category } = classifyPlaybackError({ source: 'native', detail: code });
+      fail(category, code);
+    };
+    playSafely();
   } else if (window.mpegts && window.mpegts.isSupported()) {
     // Most IPTV playlists serve a continuous raw MPEG-TS stream (no
     // .m3u8 manifest at all) rather than real HLS — browsers can't play
     // that container natively, so it needs mpegts.js's MSE remuxer.
+    state.diagnostics.strategy = 'mpegts.js';
+    state.diagnostics.delivery = 'mpegts';
     const player = window.mpegts.createPlayer({ type: 'mpegts', isLive: true, url });
     state.mpegts = player;
     player.on(window.mpegts.Events.ERROR, (_type, detail) => {
-      settle(MPEGTS_ERROR_MESSAGES[detail] || "This channel failed to play — the stream may be offline, or its server may not allow browser playback.");
+      if (isStale()) return;
+      const { category } = classifyPlaybackError({ source: 'mpegts', detail });
+      fail(category, detail);
     });
     player.attachMediaElement(el.player);
     player.load();
-    player.play().then(() => settle(null)).catch(() => {});
+    player.play().then(() => succeed()).catch((error) => {
+      if (isStale()) return;
+      if (error && error.name === 'NotAllowedError') {
+        clearWatchdog();
+        setStatus('paused', { category: 'AUTOPLAY_BLOCKED' });
+        setOverlay(ERROR_MESSAGES.AUTOPLAY_BLOCKED);
+      }
+    });
   } else {
+    state.diagnostics.strategy = 'native-progressive';
     el.player.src = url;
-    el.player.oncanplay = () => settle(null);
-    el.player.onerror = () => settle("This channel failed to play — the stream may be offline, or its server may not allow browser playback.");
-    el.player.play().catch(() => {});
+    el.player.oncanplay = () => succeed();
+    el.player.onerror = () => {
+      const code = el.player.error ? el.player.error.code : null;
+      const { category } = classifyPlaybackError({ source: 'native', detail: code });
+      fail(category, code);
+    };
+    playSafely();
   }
+
+  renderDiagnostics();
+
+  // Best-effort, non-blocking content-type probe purely for diagnostics —
+  // never gates playback, and a CORS failure is reported as "unverified",
+  // not "unsupported" (the stream may still play fine via hls.js/mpegts.js,
+  // which fetch it themselves rather than through this page's fetch()).
+  const controller = new AbortController();
+  const probeTimer = setTimeout(() => controller.abort(), 4000);
+  fetch(url, { method: 'GET', mode: 'cors', headers: { Range: 'bytes=0-1023' }, signal: controller.signal })
+    .then((res) => {
+      clearTimeout(probeTimer);
+      if (res.body && res.body.cancel) res.body.cancel().catch(() => {});
+      if (isStale()) return;
+      const contentType = res.headers.get('content-type') || '';
+      state.diagnostics.contentType = contentType || state.diagnostics.contentType;
+      if (contentType) state.diagnostics.delivery = classifyStreamType(url, contentType);
+      renderDiagnostics();
+    })
+    .catch(() => {
+      clearTimeout(probeTimer);
+      // Left as whatever classifyStreamType(url, '') already inferred —
+      // "unverified", not overwritten with a false negative.
+    });
 }
 
 function updateNowPlayingGuide(channel) {
   const tvgId = channel.attrs['tvg-id'];
-  const { current, next } = tvgId ? getNowNext(tvgId) : { current: null, next: null };
+  const { current, next } = tvgId ? getNowNext(state.guide, tvgId) : { current: null, next: null };
 
   if (!current && !next) {
     el.nowPlayingGuide.hidden = true;
@@ -313,9 +412,10 @@ function updateNowPlayingGuide(channel) {
   }
 
   el.nowPlayingGuide.hidden = false;
+  const placeholderTag = (p) => (p && p.isPlaceholder ? ' (estimated — no verified schedule)' : '');
 
   if (current) {
-    el.nowPlayingCurrentTitle.textContent = current.title || '(no title)';
+    el.nowPlayingCurrentTitle.textContent = (current.title || '(no title)') + placeholderTag(current);
     const startMs = current.start.getTime();
     const stopMs = current.stop ? current.stop.getTime() : null;
     if (stopMs) {
@@ -333,7 +433,7 @@ function updateNowPlayingGuide(channel) {
   }
 
   if (next) {
-    el.nowPlayingNextTitle.textContent = next.title || '(no title)';
+    el.nowPlayingNextTitle.textContent = (next.title || '(no title)') + placeholderTag(next);
     el.nowPlayingNextTime.textContent = formatTime(next.start);
   } else {
     el.nowPlayingNextTitle.textContent = '—';
@@ -350,8 +450,7 @@ function saveRecents(slug, recents) {
 }
 
 function pushRecent(channel) {
-  const key = channelKey(channel);
-  state.recents = [key, ...state.recents.filter((k) => k !== key)].slice(0, 12);
+  state.recents = pushRecentKey(state.recents, channelKey(channel), 12);
   saveRecents(state.slug, state.recents);
   renderRecentRow();
 }
@@ -374,9 +473,15 @@ function playChannel(channel) {
   updateNowPlayingGuide(channel);
 
   const url = channel.url;
-  const needsHttpsAttempt = location.protocol === 'https:' && url.startsWith('http://');
-  attemptPlayback(needsHttpsAttempt ? url.replace(/^http:\/\//, 'https://') : url, {
-    isUpgradeAttempt: needsHttpsAttempt
+  // Runs at most once per playback attempt (this call), never mutates
+  // channel.url itself, and only ever fires for an http:// stream loaded
+  // from this https-deployed page — never the reverse, and never twice.
+  const needsHttpsAttempt = isMixedContentCandidate(location.protocol, url);
+  const upgraded = needsHttpsAttempt ? buildHttpsUpgradeUrl(url) : null;
+  attemptPlayback(upgraded || url, {
+    isUpgradeAttempt: !!upgraded,
+    originalUrl: url,
+    channelName: channel.name
   });
 
   renderChannelList();
@@ -399,8 +504,9 @@ function matchesFilters(channel, query, group) {
 function nowNextRowHtml(channel) {
   const tvgId = channel.attrs['tvg-id'];
   if (!tvgId) return '';
-  const { current } = getNowNext(tvgId);
-  return current ? escapeHtml(current.title || '') : '';
+  const { current } = getNowNext(state.guide, tvgId);
+  if (!current) return '';
+  return escapeHtml(current.title || '') + (current.isPlaceholder ? ' (est.)' : '');
 }
 
 function renderChannelList() {
@@ -423,7 +529,7 @@ function renderChannelList() {
     const isFav = state.favorites.has(channelKey(channel));
     const nowText = nowNextRowHtml(channel);
     return `
-      <li class="channel-row${activeClass}" data-index="${channel.index}">
+      <li class="channel-row${activeClass}" data-index="${channel.index}" tabindex="0" role="button" aria-label="Play ${escapeHtml(channel.name)}">
         ${chno ? `<span class="channel-row-number">${escapeHtml(chno)}</span>` : ''}
         ${logoHtml}
         <div class="channel-row-info">
@@ -431,7 +537,7 @@ function renderChannelList() {
           <div class="channel-row-group">${escapeHtml(channel.attrs['group-title'] || '')}</div>
           ${nowText ? `<div class="channel-row-nownext" data-nownext="${channel.index}">▸ ${nowText}</div>` : ''}
         </div>
-        <button class="channel-row-fav${isFav ? ' active' : ''}" data-fav-index="${channel.index}" title="Toggle favourite" aria-label="Toggle favourite">${isFav ? '★' : '☆'}</button>
+        <button class="channel-row-fav${isFav ? ' active' : ''}" data-fav-index="${channel.index}" title="Toggle favourite" aria-label="Toggle favourite for ${escapeHtml(channel.name)}">${isFav ? '★' : '☆'}</button>
       </li>
     `;
   }).join('');
@@ -439,6 +545,13 @@ function renderChannelList() {
   el.channelList.querySelectorAll('.channel-row').forEach((row) => {
     row.addEventListener('click', (event) => {
       if (event.target.closest('.channel-row-fav')) return;
+      const idx = Number(row.dataset.index);
+      const channel = state.channels.find((c) => c.index === idx);
+      if (channel) playChannel(channel);
+    });
+    row.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
       const idx = Number(row.dataset.index);
       const channel = state.channels.find((c) => c.index === idx);
       if (channel) playChannel(channel);
@@ -472,11 +585,18 @@ function renderRecentRow() {
     const logoHtml = logo
       ? `<img class="logo-thumb" src="${escapeHtml(logo)}" alt="${escapeHtml(channel.name)}" title="${escapeHtml(channel.name)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" />`
       : `<div class="logo-thumb--empty" title="${escapeHtml(channel.name)}"></div>`;
-    return `<span data-index="${channel.index}">${logoHtml}</span>`;
+    return `<span data-index="${channel.index}" tabindex="0" role="button" aria-label="Play ${escapeHtml(channel.name)}">${logoHtml}</span>`;
   }).join('');
 
   el.recentRow.querySelectorAll('[data-index]').forEach((wrap) => {
     wrap.addEventListener('click', () => {
+      const idx = Number(wrap.dataset.index);
+      const channel = state.channels.find((c) => c.index === idx);
+      if (channel) playChannel(channel);
+    });
+    wrap.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
       const idx = Number(wrap.dataset.index);
       const channel = state.channels.find((c) => c.index === idx);
       if (channel) playChannel(channel);
@@ -543,12 +663,16 @@ async function loadSlug(slug) {
   state.slug = slug;
   state.channels = channels;
   state.activeIndex = null;
-  state.favorites = loadFavorites(slug);
+
+  const validKeys = new Set(channels.map((c) => channelKey(c)));
+  state.favorites = new Set(pruneStaleKeys(Array.from(loadFavorites(slug)), validKeys));
+  saveFavorites(slug, state.favorites);
   state.favoritesOnly = false;
   el.favFilterBtn.classList.remove('active');
   try {
     const savedRecents = localStorage.getItem(`iptv4u_watch_recents_${slug}`);
-    state.recents = savedRecents ? JSON.parse(savedRecents) : [];
+    const parsed = savedRecents ? JSON.parse(savedRecents) : [];
+    state.recents = pruneStaleKeys(parsed, validKeys);
   } catch {
     state.recents = [];
   }
@@ -581,10 +705,10 @@ async function loadSlug(slug) {
     // Patch just the now/next text in place rather than re-rendering the
     // whole list, so scrolling and search state aren't disturbed by a
     // periodic refresh.
-    document.querySelectorAll('[data-nownext]').forEach((el2) => {
-      const idx = Number(el2.dataset.nownext);
+    document.querySelectorAll('[data-nownext]').forEach((elx) => {
+      const idx = Number(elx.dataset.nownext);
       const channel = state.channels.find((c) => c.index === idx);
-      if (channel) el2.textContent = `▸ ${nowNextRowHtml(channel)}`;
+      if (channel) elx.textContent = `▸ ${nowNextRowHtml(channel)}`;
     });
     const active = state.channels.find((c) => c.index === state.activeIndex);
     if (active) updateNowPlayingGuide(active);
@@ -641,18 +765,44 @@ el.goLiveBtn.addEventListener('click', () => {
   el.player.play().catch(() => {});
 });
 
-el.sleepTimer.addEventListener('change', () => {
+function clearSleepTimer() {
   if (state.sleepTimerHandle) {
     clearTimeout(state.sleepTimerHandle);
     state.sleepTimerHandle = null;
   }
-  const minutes = Number(el.sleepTimer.value);
+}
+
+function fireSleepTimer(label) {
+  destroyPlayer();
+  setStatus('paused');
+  setOverlay(`Sleep timer ended playback (${label}).`);
+  el.sleepTimer.value = '0';
+}
+
+el.sleepTimer.addEventListener('change', () => {
+  clearSleepTimer();
+  const value = el.sleepTimer.value;
+  if (value === '0') return;
+
+  if (value === 'end-of-programme') {
+    const channel = state.channels.find((c) => c.index === state.activeIndex);
+    const tvgId = channel?.attrs['tvg-id'];
+    const { current } = tvgId ? getNowNext(state.guide, tvgId) : { current: null };
+    if (!current || !current.stop) {
+      el.copyDiagnosticStatus.textContent = '';
+      setOverlay('No programme end time is known for this channel yet — pick a fixed duration instead.');
+      setTimeout(() => setOverlay(null), 4000);
+      el.sleepTimer.value = '0';
+      return;
+    }
+    const ms = current.stop.getTime() - Date.now();
+    state.sleepTimerHandle = setTimeout(() => fireSleepTimer('end of programme'), Math.max(0, ms));
+    return;
+  }
+
+  const minutes = Number(value);
   if (!minutes) return;
-  state.sleepTimerHandle = setTimeout(() => {
-    destroyPlayer();
-    setOverlay(`Sleep timer ended playback after ${minutes} minutes.`);
-    el.sleepTimer.value = '0';
-  }, minutes * 60000);
+  state.sleepTimerHandle = setTimeout(() => fireSleepTimer(`${minutes} minutes`), minutes * 60000);
 });
 
 const initialSlug = new URLSearchParams(location.search).get('slug');

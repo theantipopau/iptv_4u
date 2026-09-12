@@ -448,26 +448,135 @@ export function buildLogoMap(logos) {
   return out;
 }
 
-// iptv-org's public catalog carries alt_names for some rebranded channels
-// but not others — e.g. FoxCricket.au already lists "Fox Sports 501" as an
-// alt_name, but FoxLeague.au and FoxFooty.au (the same Foxtel numbering
-// scheme, channels 502/504) have none at all, so an M3U entry literally
-// named "Fox Sports 502" or "Fox Sports 4" had nothing to match against.
-// Kayo Sports (a separate streaming platform) carries the identical
-// channels under its own branding on top of that. Confirmed against the
-// live catalog and Foxtel/Kayo's own published channel numbering.
-const KNOWN_ALT_NAMES = {
-  'FoxCricket.au': ['Kayo Cricket'],
-  'FoxLeague.au': ['Fox Sports 2', 'Fox Sports 502', 'Kayo League'],
-  'FoxFooty.au': ['Fox Sports 4', 'Fox Sports 504', 'Kayo Footy'],
-  'FoxSportsNews.au': ['Kayo Sports News'],
-  'FoxSportsMorePlus.au': ['Fox Sports 507', 'Fox Sports More', 'Kayo Sports More'],
-  // DStv channel 236: the catalog's own name ("WWE Channel Africa") only
-  // shares one word with either the DStv guide's name ("SuperSport WWE")
-  // or its own on-screen name ("WWE Channel") — both score just under the
-  // confidence threshold without this.
-  'WWEChannelAfrica.za': ['SuperSport WWE', 'WWE Channel']
-};
+// ---- curated channel alias registry ----------------------------------------
+//
+// Structured replacement for the old flat KNOWN_ALT_NAMES map — same
+// purpose (bridge a channel's real-world alternate names/ids to iptv-org's
+// single canonical entry), but shaped so each fact (country, channel
+// number, provider-specific id, platform branding) is its own field
+// instead of being smushed into one alias-string list. `channelNumber` is
+// reference/display metadata ONLY — it is never folded into the matched-
+// name corpus, so a channel number alone can never cause a match (many
+// providers reuse the same number for an unrelated channel).
+//
+// Seeded with every mapping verified during this project's real-playlist
+// debugging sessions: AU Fox Sports/Kayo, NZ Sky Sport, ZA SuperSport.
+// Not exhaustive by design — treat as a versioned, extensible source, not
+// a permanent ground truth; add more entries the same way if a real
+// playlist turns up another gap.
+export const CHANNEL_ALIAS_REGISTRY = [
+  // --- Australia: Fox Sports / Kayo ---
+  { id: 'FoxSportsNews.au', country: 'AU', canonicalName: 'Fox Sports News', channelNumber: '500', aliases: [], platformNames: { kayo: 'Kayo Sports News' }, providerEpgIds: [] },
+  { id: 'FoxCricket.au', country: 'AU', canonicalName: 'Fox Cricket', channelNumber: '501', aliases: ['Fox Sports 1', 'FS1'], platformNames: { kayo: 'Kayo Cricket' }, providerEpgIds: [] },
+  { id: 'FoxLeague.au', country: 'AU', canonicalName: 'Fox League', channelNumber: '502', aliases: ['Fox Sports 2', 'Fox Sports 502', 'FS2'], platformNames: { kayo: 'Kayo League' }, providerEpgIds: [] },
+  { id: 'FoxSports503.au', country: 'AU', canonicalName: 'Fox Sports 503', channelNumber: '503', aliases: ['Fox Sports 3', 'FS3'], platformNames: {}, providerEpgIds: [] },
+  { id: 'FoxFooty.au', country: 'AU', canonicalName: 'Fox Footy', channelNumber: '504', aliases: ['Fox Sports 4', 'Fox Sports 504', 'FS4'], platformNames: { kayo: 'Kayo Footy' }, providerEpgIds: [] },
+  { id: 'FoxSports505.au', country: 'AU', canonicalName: 'Fox Sports 505', channelNumber: '505', aliases: ['Fox Sports 5', 'FS5'], platformNames: {}, providerEpgIds: [] },
+  { id: 'FoxSports506.au', country: 'AU', canonicalName: 'Fox Sports 506', channelNumber: '506', aliases: ['Fox Sports 6', 'FS6'], platformNames: {}, providerEpgIds: [] },
+  {
+    id: 'FoxSportsMorePlus.au',
+    country: 'AU',
+    canonicalName: 'Fox Sports More+',
+    channelNumber: '507',
+    aliases: ['Fox Sports 507', 'Fox Sports More'],
+    platformNames: { kayo: 'Kayo Sports More' },
+    // Legacy ids seen in the wild for this exact channel across different
+    // EPG sources — see guides/README.md's "Channel 507 EPG compatibility
+    // note" for how these were confirmed.
+    providerEpgIds: ['FoxSportsMore.au', 'FoxSports507.au']
+  },
+
+  // --- New Zealand: Sky Sport (+ ESPN/ESPN2, bundled alongside it on Sky Go/Sky Sport Now) ---
+  { id: 'SkySportSelect.nz', country: 'NZ', canonicalName: 'Sky Sport Select', channelNumber: '050', aliases: [], platformNames: {}, providerEpgIds: [] },
+  { id: 'SkySport1.nz', country: 'NZ', canonicalName: 'Sky Sport 1', channelNumber: '051', aliases: [], platformNames: {}, providerEpgIds: [] },
+  { id: 'SkySport2.nz', country: 'NZ', canonicalName: 'Sky Sport 2', channelNumber: '052', aliases: [], platformNames: {}, providerEpgIds: [] },
+  { id: 'SkySport3.nz', country: 'NZ', canonicalName: 'Sky Sport 3', channelNumber: '053', aliases: [], platformNames: {}, providerEpgIds: [] },
+  { id: 'SkySport4.nz', country: 'NZ', canonicalName: 'Sky Sport 4', channelNumber: '054', aliases: [], platformNames: {}, providerEpgIds: [] },
+  { id: 'SkySport5.nz', country: 'NZ', canonicalName: 'Sky Sport 5', channelNumber: '055', aliases: [], platformNames: {}, providerEpgIds: [] },
+  { id: 'SkySport6.nz', country: 'NZ', canonicalName: 'Sky Sport 6', channelNumber: '056', aliases: [], platformNames: {}, providerEpgIds: [] },
+  { id: 'SkySport7.nz', country: 'NZ', canonicalName: 'Sky Sport 7', channelNumber: '057', aliases: [], platformNames: {}, providerEpgIds: [] },
+  { id: 'SkySportPremierLeague.nz', country: 'NZ', canonicalName: 'Sky Sport Premier League', channelNumber: '058', aliases: [], platformNames: {}, providerEpgIds: [] },
+  { id: 'SkySport9.nz', country: 'NZ', canonicalName: 'Sky Sport 9', channelNumber: '059', aliases: [], platformNames: {}, providerEpgIds: [] },
+  // Not in iptv-org's public catalog at all (confirmed) — kept here anyway
+  // so matchAliasRegistry can still identify/name them; real schedule for
+  // both only ever comes from the guides/nz-sky-sport.xml custom guide
+  // (channel ids "60"/"61" there), never from this registry.
+  { id: 'ESPN.nz', country: 'NZ', canonicalName: 'ESPN', channelNumber: '060', aliases: [], platformNames: {}, providerEpgIds: [] },
+  { id: 'ESPN2.nz', country: 'NZ', canonicalName: 'ESPN2', channelNumber: '061', aliases: [], platformNames: {}, providerEpgIds: [] },
+
+  // --- South Africa: SuperSport (DStv) ---
+  { id: 'SuperSportBlitz.za', country: 'ZA', canonicalName: 'SuperSport Blitz', channelNumber: '200', aliases: [], platformNames: { dstv: 'SuperSport Blitz' }, providerEpgIds: [] },
+  { id: 'SuperSportGrandstand.za', country: 'ZA', canonicalName: 'SuperSport Grandstand', channelNumber: '201', aliases: [], platformNames: { dstv: 'SuperSport Grandstand' }, providerEpgIds: ['GRANDSTAND.za'] },
+  { id: 'SuperSportPSL.za', country: 'ZA', canonicalName: 'SuperSport PSL', channelNumber: '202', aliases: [], platformNames: { dstv: 'SuperSport PSL' }, providerEpgIds: ['PSL.za'] },
+  { id: 'SuperSportPremierLeague.za', country: 'ZA', canonicalName: 'SuperSport Premier League', channelNumber: '203', aliases: [], platformNames: { dstv: 'SuperSport Premier League' }, providerEpgIds: [] },
+  { id: 'SuperSportLaLiga.za', country: 'ZA', canonicalName: 'SuperSport LaLiga', channelNumber: '204', aliases: [], platformNames: { dstv: 'SuperSport LaLiga' }, providerEpgIds: [] },
+  { id: 'SuperSportFootball.za', country: 'ZA', canonicalName: 'SuperSport Football', channelNumber: '205', aliases: [], platformNames: { dstv: 'SuperSport Football' }, providerEpgIds: ['FOOTBALL.za'] },
+  { id: 'SuperSportFootballPlus.za', country: 'ZA', canonicalName: 'SuperSport Football Plus', channelNumber: '206', aliases: ['SuperSport Variety 1'], platformNames: { dstv: 'SuperSport Football Plus' }, providerEpgIds: ['SuperSportVariety1.za'] },
+  { id: 'SuperSportVariety2.za', country: 'ZA', canonicalName: 'SuperSport Variety 2', channelNumber: '207', aliases: [], platformNames: { dstv: 'SuperSport Variety 2' }, providerEpgIds: [] },
+  { id: 'SuperSportVariety3.za', country: 'ZA', canonicalName: 'SuperSport Variety 3', channelNumber: '208', aliases: [], platformNames: { dstv: 'SuperSport Variety 3' }, providerEpgIds: [] },
+  { id: 'SuperSportVariety4.za', country: 'ZA', canonicalName: 'SuperSport Variety 4', channelNumber: '209', aliases: [], platformNames: { dstv: 'SuperSport Variety 4' }, providerEpgIds: [] },
+  { id: 'SuperSportAction.za', country: 'ZA', canonicalName: 'SuperSport Action', channelNumber: '210', aliases: [], platformNames: { dstv: 'SuperSport Action' }, providerEpgIds: ['ACTION.za'] },
+  { id: 'SuperSportRugby.za', country: 'ZA', canonicalName: 'SuperSport Rugby', channelNumber: '211', aliases: [], platformNames: { dstv: 'SuperSport Rugby' }, providerEpgIds: ['RUGBY.za'] },
+  { id: 'SuperSportCricket.za', country: 'ZA', canonicalName: 'SuperSport Cricket', channelNumber: '212', aliases: [], platformNames: { dstv: 'SuperSport Cricket' }, providerEpgIds: ['CRICKET.za'] },
+  { id: 'SuperSportGolf.za', country: 'ZA', canonicalName: 'SuperSport Golf', channelNumber: '213', aliases: [], platformNames: { dstv: 'SuperSport Golf' }, providerEpgIds: ['GOLF.za'] },
+  { id: 'SuperSportTennis.za', country: 'ZA', canonicalName: 'SuperSport Tennis', channelNumber: '214', aliases: [], platformNames: { dstv: 'SuperSport Tennis' }, providerEpgIds: ['TENNIS.za'] },
+  { id: 'SuperSportMotorsport.za', country: 'ZA', canonicalName: 'SuperSport Motorsport', channelNumber: '215', aliases: [], platformNames: { dstv: 'SuperSport Motorsport' }, providerEpgIds: ['MOTORSPORT.za'] },
+  { id: 'WWEChannelAfrica.za', country: 'ZA', canonicalName: 'WWE Channel Africa', channelNumber: '236', aliases: ['WWE Channel'], platformNames: { dstv: 'SuperSport WWE' }, providerEpgIds: ['WWE.CHANNEL.za'] }
+];
+
+const ALIAS_REGISTRY_BY_ID = new Map(CHANNEL_ALIAS_REGISTRY.map((entry) => [entry.id, entry]));
+
+// Every display-name-shaped alias for a registry entry — aliases plus
+// platform names, deliberately excluding channelNumber and providerEpgIds
+// (those are ids, not names; matching on a bare number is exactly what
+// "do not match on channel number alone" rules out).
+function registryDisplayAliases(entry) {
+  return [...entry.aliases, ...Object.values(entry.platformNames)];
+}
+
+// Folded into an iptv-org catalog channel's own alt_names when scoring it
+// (searchIptvApi below) — this is what makes e.g. "Fox Sports 502" or
+// "Kayo League" match the catalog's "Fox League" entry (which upstream
+// carries no alt_names of its own for this), while keeping that entry's
+// real logo/metadata as the winning candidate rather than a duplicate.
+function getRegistryAliasNames(channelId) {
+  const entry = ALIAS_REGISTRY_BY_ID.get(channelId);
+  return entry ? registryDisplayAliases(entry) : [];
+}
+
+// A standalone match source for registry entries that identify a channel
+// iptv-org's own catalog doesn't carry at all (e.g. ESPN.nz/ESPN2.nz —
+// confirmed absent from the live catalog) — without this, those channels
+// could never be identified via the public-catalog path no matter how
+// the query is phrased, since there'd be no catalog channel to attach an
+// alt_name to in the first place. Always canMergeGuide:false — a real
+// schedule, when one exists, only ever comes from a worker/custom-guide
+// source, never from this identity-only registry.
+export function matchAliasRegistry(query, cleanedQuery, isTwentyFourSeven, queryCountry) {
+  const matches = [];
+  for (const entry of CHANNEL_ALIAS_REGISTRY) {
+    const names = [entry.canonicalName, ...registryDisplayAliases(entry)];
+    let score = 0;
+    for (const name of names) {
+      score = Math.max(score, scoreMatch(cleanedQuery, name));
+      if (!isTwentyFourSeven) score = Math.max(score, scoreMatch(query, name));
+    }
+    score = applyCountryAdjustment(score, queryCountry, entry.country);
+    if (score < (isTwentyFourSeven ? 0.6 : 0.45)) continue;
+
+    matches.push({
+      sourceType: 'alias-registry',
+      source: 'channel alias registry',
+      score,
+      channelName: entry.canonicalName,
+      channelId: entry.id,
+      logoUrl: null,
+      metadata: { country: entry.country, channelNumber: entry.channelNumber },
+      canMergeGuide: false
+    });
+  }
+  return matches;
+}
 
 export function searchIptvApi(query, cleanedQuery, isTwentyFourSeven, channels, guides, logoMap, queryCountry) {
   const byChannelId = new Map();
@@ -492,7 +601,7 @@ export function searchIptvApi(query, cleanedQuery, isTwentyFourSeven, channels, 
     if (!isTwentyFourSeven) {
       score = Math.max(score, scoreMatch(query, channel.name));
     }
-    const allAltNames = [...(channel.alt_names || []), ...(KNOWN_ALT_NAMES[channel.id] || [])];
+    const allAltNames = [...(channel.alt_names || []), ...getRegistryAliasNames(channel.id)];
     for (const alt of allAltNames) {
       score = Math.max(score, scoreMatch(cleanedQuery, alt));
       if (!isTwentyFourSeven) {

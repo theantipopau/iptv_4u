@@ -1,0 +1,17 @@
+{
+  "name": "IPTV 4U",
+  "short_name": "IPTV 4U",
+  "description": "Watch your published IPTV playlist directly in the browser.",
+  "start_url": "/watch",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#10111c",
+  "theme_color": "#10111c",
+  "icons": [
+    {
+      "src": "/assets/logo.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png"
+    }
+  ]
+}

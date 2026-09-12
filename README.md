@@ -43,8 +43,18 @@ worker.js                 Cloudflare Worker entry point — one fetch
                          a scheduled() handler for auto-refresh, falling
                          back to static assets for everything else
 public/                  static frontend — identical against either backend
+public/index.html, app.js  the M3U/EPG linker (import, match, review, export, publish)
+public/watch.html, watch.js  the /watch live viewer — DOM/browser glue only
+public/watch-core.js      pure viewer logic (parsing, now/next, error
+                         classification, redaction) — no DOM references,
+                         so tests/*.test.mjs import it directly under Node
+public/service-worker.js  PWA app-shell cache; explicit deny-first rules
+                         for anything playlist/guide/stream-related
+public/manifest.webmanifest  PWA manifest
 guides/                  pre-filtered XMLTV snapshots checked into the
                          repo for use as custom guide URLs (see below)
+tests/                   node:test unit tests (no framework dependency) —
+                         run with `npm test`
 ```
 
 Both entry points expose the exact same routes and call the same `shared/` logic — the frontend in `public/` doesn't know or care which one it's talking to, and a matching-logic fix only needs to land in one place.
@@ -59,6 +69,8 @@ npm start
 ```
 
 Then open http://localhost:3000 — no XMLTV file needed to start, just an M3U.
+
+**Tests**: `npm test` (Node's built-in `node:test`/`assert` — no test framework dependency). Covers `public/watch-core.js` (M3U/XMLTV parsing, now/next selection, HTTPS-upgrade construction, URL redaction, error classification) and `shared/core.js`'s alias registry. These are unit tests for pure logic, not a browser automation suite — playback itself is verified manually against real streams (see **Watching in the browser**).
 
 ## API reference
 
@@ -155,16 +167,48 @@ Step 5 also has an auto-refresh section: give it an M3U **URL** (instead of just
 
 ## Watching in the browser
 
-Once a playlist is published (above), `/watch?slug=<slug>` is a mobile-friendly viewer for it — no TiViMate/VLC required for anything that can play directly in a browser. It fetches `/iptv/<slug>.m3u` (and `/epg/<slug>.xml`, if one was published too) client-side; there's no server-side relay or proxy, so playback only works for streams the *browser itself* can reach and decode directly.
+Once a playlist is published (above), `/watch?slug=<slug>` is a mobile-friendly viewer for it — the core experience is watching directly in the browser, not handing off to TiViMate/VLC. It fetches `/iptv/<slug>.m3u` (and `/epg/<slug>.xml`, if one was published too) client-side; **there is no server-side relay or proxy, and none is planned** — playback only ever works for streams the *browser itself* can reach and decode directly. That's a deliberate design boundary, not an oversight: a relay/transcode gateway is real infrastructure (a persistent process, likely FFmpeg, a cost commitment) that doesn't fit a Cloudflare Workers free-tier deployment, and this app won't add one silently. See **Why no relay/FFmpeg** below.
 
-- **Channel list**: searchable, filterable by `group-title`, shows each channel's logo, number (`tvg-chno`, if your M3U has it), and — if a guide was published — its current programme inline.
-- **Now/next guide**: above the player, the actively-playing channel's current programme (with a live progress bar) and next programme, computed client-side from the published XMLTV — handles missing `stop` times and DST-affected offsets the same way the server-side guide merge does.
-- **Favourites and recently watched**: a star toggle per channel and a horizontal recent-channels row, both persisted in `localStorage` per slug.
-- **Sleep timer** and a **"Go Live"** button (jumps back to the live edge if you've paused/seeked).
-- **Playback pipeline**: native HLS (Safari/iOS) → [hls.js](https://github.com/video-dev/hls.js) for `.m3u8` elsewhere → [mpegts.js](https://github.com/xqq/mpegts.js) for raw MPEG-TS streams (the common case for most IPTV playlists — no `.m3u8` manifest at all, just a continuous stream, which browsers can't decode natively). If a stream is plain `http://` and the site is HTTPS, it first tries the same URL with `https://` substituted (some providers happen to serve both, silently) before explaining that mixed content is blocked — that specific case is the one thing this can't route around client-side.
-- **Errors are specific, not just "failed to play"**: hls.js/mpegts.js report a stable failure reason (unreachable, timed out, unsupported codec, encrypted, ...) which gets translated into a plain-language message, plus a 15s watchdog so a stream that neither errors nor starts doesn't leave "Loading…" up forever.
+Logic that doesn't need a DOM (M3U/guide parsing, favourites/recents, error classification, URL redaction, HTTPS-upgrade construction) lives in `public/watch-core.js`, a plain ES module with no browser-only globals — it's what `public/watch.js` imports, and it's exactly what `tests/watch-core.test.mjs` and `tests/alias-registry.test.mjs` exercise directly under Node (`npm test`), so this logic is unit-tested without a browser automation stack.
 
-**Known limitation, not fixable client-side**: a stream whose server doesn't allow cross-origin browser access, or that's HTTP-only with no HTTPS equivalent, won't play here even though it works fine in TiviMate/VLC — those aren't bound by the browser sandbox this viewer runs in. There's no server-side relay/transcode in this app (deliberately — that's a real cost/infrastructure commitment for a Cloudflare Workers free-tier deployment, not something to add silently); TiviMate remains the reliable fallback for anything that hits this wall.
+### Playback pipeline
+
+1. **Native HLS** (Safari/iOS) for a `.m3u8` URL, when the browser can play it without help.
+2. **[hls.js](https://github.com/video-dev/hls.js)** (pinned version, loaded from cdnjs) for `.m3u8` elsewhere — Media Source Extensions in the browser, not a native decoder.
+3. **[mpegts.js](https://github.com/xqq/mpegts.js)** for a raw, continuous MPEG-TS stream — the common case for most IPTV playlists (no `.m3u8` manifest at all), which no browser decodes natively.
+4. A clear, specific explanation when none of the above can play the stream — never a silent failure, and never a hand-off to an external app as part of the normal flow.
+
+Every playback attempt gets a monotonically increasing attempt id; every async callback (hls.js events, mpegts.js events, native `<video>` events, the load watchdog) checks it's still current before touching any UI state, so a slow failure from a channel you've already switched away from can't overwrite what you're watching now. Confirmed via rapid-switch testing, not just by inspection.
+
+If a stream is plain `http://` and the page is HTTPS, it tries the identical URL with `https://` substituted first (some providers serve both silently, without the M3U ever being updated) — this runs at most once per attempt, never touches the channel's stored URL, and only fires for this specific http-on-https case. Failing that, it explains the real, unfixable-client-side reason: browsers block insecure video on a secure page, full stop.
+
+### Error messages
+
+Every failure is classified into one of a fixed set of named categories (`shared`/`watch-core.js`'s `classifyPlaybackError`) with a specific plain-language message — `HTTP_MIXED_CONTENT`, `HTTPS_UPGRADE_FAILED`, `MANIFEST_LOAD_FAILED`, `MANIFEST_PARSE_FAILED`, `MEDIA_NETWORK_ERROR`, `MEDIA_DECODE_ERROR`, `AUTH_EXPIRED`, `LOAD_TIMEOUT`, `AUTOPLAY_BLOCKED`, `UNSUPPORTED_FORMAT`, `UNKNOWN` — sourced from hls.js's/mpegts.js's own stable error codes (never a guess, and never "CORS" by default for an otherwise-unexplained failure). A 15s watchdog covers the case where a stream neither errors nor starts. A **"Technical details"** disclosure under the player shows the full diagnostic record (redacted host/path only — never a full stream URL, query string, or credential), with a **"Copy diagnostic"** button for pasting into a bug report.
+
+### Now/next guide
+
+Parses the published XMLTV once per load (a small regex-based extractor in `watch-core.js`, not `DOMParser` — that's what lets the exact same function run under Node for tests) into a per-channel programme index. Shows the current programme with a live progress bar and the next one, both per-row in the channel list and in the now-playing panel; a 60s interval patches just the now/next text in place rather than re-rendering the list, so scrolling and search state survive the refresh. Honors XMLTV's UTC-offset timestamps directly (no separate DST calculation needed — the offset in the timestamp already accounts for it). A synthesized 24/7 placeholder guide entry (see **Optional: 24/7 channel art via TMDB**) is tagged via its own `<category>24/7</category>` marker and shown as "(estimated — no verified schedule)", never presented as a real schedule.
+
+### Favourites, recently watched, sleep timer
+
+A star toggle per channel and a **favourites-only** filter, plus a horizontal **recently watched** row — both keyed by the channel's `tvg-id` (falling back to its name), not its position in the list, so a republished playlist that reorders or drops channels doesn't corrupt either list; stale entries for a channel that's disappeared are pruned automatically on load. Both persist in `localStorage` per slug. A **sleep timer** (15/30/60/90 minutes, or "end of programme" when now/next data is available) stops playback cleanly and shows a brief confirmation instead of just going silent.
+
+### Mobile
+
+Touch targets sized to ~44px throughout, `env(safe-area-inset-*)` respected on notched phones, hover states swapped for `:active` below 640px (a stuck hover highlight is a touch-only annoyance, not a desktop one), a side-by-side layout in landscape instead of the default stacked one, keyboard navigation (every channel row and control is a real focus target with a visible focus ring), and `prefers-reduced-motion` honored.
+
+### Installable as a PWA
+
+`manifest.webmanifest` + `service-worker.js` make `/watch` installable on a phone's home screen. The service worker caches the static shell only (HTML/CSS/JS/icons) — it has an explicit **deny-first** rule for anything playlist-, guide-, or stream-related (`/iptv/*`, `/epg/*`, `/api/*`, any response whose `Content-Type` looks like media/manifest data) that always goes straight to the network, never into the cache, regardless of path. Offline, the shell still loads with a clear "live channels need a network connection" banner — it does not pretend to play anything without one.
+
+### Known limitation, not fixable client-side
+
+A stream whose server doesn't allow cross-origin browser access, or that's HTTP-only with no HTTPS equivalent, won't play here even though it works fine in TiViMate/VLC — those aren't bound by the browser sandbox this viewer runs in. TiViMate remains the reliable fallback for anything that hits this wall; it's a fallback, not the primary workflow.
+
+### Why no relay/FFmpeg
+
+A browser-side player can only do so much — some streams are genuinely only reachable with server help (CORS, mixed content with no HTTPS equivalent, a header the provider requires). Building that properly (an authenticated, SSRF-hardened relay; HLS manifest rewriting that also handles keys/subtitles/alternate audio; a real FFmpeg remux/transcode gateway with session lifecycle management) is a legitimate multi-week engineering effort with real, ongoing infrastructure cost — not something this project takes on silently for a personal, free-tier Cloudflare Workers deployment. If that's ever wanted, it's a deliberate, scoped decision to make explicitly, not a default.
 
 ## How matching actually works
 
@@ -177,6 +221,7 @@ Once a playlist is published (above), `/watch?slug=<slug>` is a mobile-friendly 
 - **Spacing-insensitive equality**: "ITV 1" and "ITV1" collapse to the same alphanumeric string and score as a near-exact match — a common enough M3U-vs-catalog naming difference (space around a trailing number) that it's worth checking for directly rather than relying on token overlap to catch it.
 - **Confidence bar**: general matches need a score ≥0.45–0.48 depending on source; 24/7-flagged matches need ≥0.6, since a wrong identification (wrong poster, wrong logo) is worse than none.
 - **Source prioritization**: a single search can't scan every EPG worker source (there are ~300, and Cloudflare's free-plan subrequest limits cap this at 40 per request) — sources are ranked by whether their host name matches the channel's country hint or name tokens before slicing to the scan limit, so a niche source is more likely to actually get checked.
+- **Curated alias registry** (`shared/core.js`'s `CHANNEL_ALIAS_REGISTRY`): a small, versioned list of real-world channel identity facts iptv-org's own catalog doesn't fully carry — a channel number, a platform-specific rebrand name (Kayo Sports vs. Foxtel's own Fox Sports numbering, DStv's SuperSport branding), or a legacy/alternate EPG id. Two things it feeds: existing catalog entries missing their own `alt_names` (so "Fox Sports 502" or "Kayo League" resolves to the catalog's "Fox League" entry, which upstream carries none of those names itself), and channels the public catalog doesn't carry *at all* (ESPN NZ/ESPN2 NZ, confirmed absent upstream — these are only otherwise identifiable via a matching worker/custom-guide source). A channel number alone never triggers a match by itself — it's reference metadata, not part of the matched text, since providers reuse the same number for unrelated channels. Seeded with every AU Fox Sports/Kayo, NZ Sky Sport, and ZA SuperSport mapping found during real-playlist debugging; not exhaustive by design. Covered by `tests/alias-registry.test.mjs`.
 
 ## Notes
 
