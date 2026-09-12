@@ -152,7 +152,7 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
-function buildLinkFromMatch(match, channel) {
+function buildLinkFromMatch(match, channel, { keepLogoUrl } = {}) {
   const isTmdb = match.sourceType === 'tmdb';
   const channelId = match.channelId ||
     (isTmdb ? `tmdb-${slugify(match.tmdb?.title || channel.name)}` : slugify(channel.name));
@@ -162,13 +162,41 @@ function buildLinkFromMatch(match, channel) {
     channelId,
     channelName: match.channelName || channel.name,
     source: match.source || '',
-    logoUrl: match.logoUrl || null,
+    logoUrl: keepLogoUrl !== undefined ? keepLogoUrl : (match.logoUrl || null),
     guideUrl: match.guideUrl || null,
     canMergeGuide: !!match.canMergeGuide,
     tmdb: isTmdb ? match.tmdb : null,
     synthesize: isTmdb && !!match.canSynthesizeGuide,
     score: typeof match.score === 'number' ? match.score : null
   };
+}
+
+// A schedule-bearing match and the best-looking logo don't always come
+// from the same source — a custom/worker EPG's own icon is often a
+// generic placeholder even when its programme data is exactly right. So
+// identity/schedule and logo are picked independently instead of both
+// being forced to come from whichever single match scores highest.
+
+const CONFIDENT_MATCH_SCORE = 0.6;
+
+function pickIdentityMatch(matches) {
+  if (!matches.length) return null;
+  const top = matches[0]; // matches arrive sorted by score, descending
+  if (top.canMergeGuide) return top;
+  // The top-scoring match has no real schedule — if a still-confident
+  // match further down the list does, prefer that one so the channel
+  // doesn't lose real programme data just because a logo/metadata-only
+  // match happened to edge it out on name similarity.
+  return matches.find((m) => m.canMergeGuide && m.score >= CONFIDENT_MATCH_SCORE) || top;
+}
+
+function pickLogoUrl(matches, identityMatch) {
+  const confident = matches.filter((m) => m.logoUrl && m.score >= Math.min(CONFIDENT_MATCH_SCORE, identityMatch.score ?? 0));
+  if (!confident.length) return identityMatch.logoUrl || null;
+  // Prefer a curated public-catalog logo over a scraped custom/worker
+  // EPG's own icon, which is frequently just a generic placeholder.
+  const catalogMatch = confident.find((m) => m.sourceType === 'iptv-org-api');
+  return (catalogMatch || confident[0]).logoUrl;
 }
 
 function manualLink(channel, { channelId, logoUrl }) {
@@ -617,6 +645,15 @@ function buildMatchCard(match, channel) {
     ? 'Identified via TMDB — logo + placeholder guide only, no real schedule'
     : (match.canMergeGuide ? 'Yes, full guide merge' : 'No, logo/metadata only');
 
+  const existingLogo = state.links.get(channel.index)?.logoUrl;
+  // A schedule-bearing match's own logo is sometimes worse than whatever
+  // is already linked — offer to take just the guide/identity here and
+  // leave the current logo alone, instead of forcing both to come from
+  // this one match.
+  const keepLogoBtn = (match.canMergeGuide && existingLogo && existingLogo !== match.logoUrl)
+    ? `<button class="btn" data-select-keep-logo="${encodeURIComponent(JSON.stringify(match))}">Use Guide, Keep Current Logo</button>`
+    : '';
+
   card.innerHTML = `
     ${thumb}
     <h4>${escapeHtml(match.channelName || match.channelId || 'Unknown')}</h4>
@@ -626,6 +663,7 @@ function buildMatchCard(match, channel) {
     ${tmdbLine}
     <div class="match-actions">
       <button class="btn primary" data-select="${encodeURIComponent(JSON.stringify(match))}">Use This Match</button>
+      ${keepLogoBtn}
     </div>
   `;
 
@@ -636,6 +674,18 @@ function buildMatchCard(match, channel) {
     const selected = JSON.parse(raw);
 
     state.links.set(channel.index, buildLinkFromMatch(selected, channel));
+    renderTable();
+    autosave();
+    el.matchDialog.close();
+  });
+
+  const keepLogoSelectBtn = card.querySelector('button[data-select-keep-logo]');
+  keepLogoSelectBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    const raw = decodeURIComponent(keepLogoSelectBtn.dataset.selectKeepLogo);
+    const selected = JSON.parse(raw);
+
+    state.links.set(channel.index, buildLinkFromMatch(selected, channel, { keepLogoUrl: existingLogo }));
     renderTable();
     autosave();
     el.matchDialog.close();
@@ -704,9 +754,10 @@ async function matchOneChannel(channel) {
   state.errors.delete(channel.index);
   updateTmdbStatus(result.context);
 
-  const best = result.matches[0];
-  if (best) {
-    state.links.set(channel.index, buildLinkFromMatch(best, channel));
+  const identityMatch = pickIdentityMatch(result.matches);
+  if (identityMatch) {
+    const logoUrl = pickLogoUrl(result.matches, identityMatch);
+    state.links.set(channel.index, buildLinkFromMatch(identityMatch, channel, { keepLogoUrl: logoUrl }));
   }
 }
 
