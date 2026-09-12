@@ -199,17 +199,33 @@ function collapseAlnum(s) {
   return s.replace(/[^a-z0-9]/g, '');
 }
 
+// "ITV1" vs "ITV 1", "BBC1" vs "BBC 1" — a channel-number glued directly
+// onto the name is an extremely common catalog convention that an M3U
+// entry (or a different catalog) often writes with a space instead. Split
+// on every letter<->digit boundary so both spellings tokenize identically,
+// then strip quality-tag words a catalog name often carries that a query
+// doesn't (or vice versa) — same list cleanTitleForLookup already strips
+// from the query side, applied here to both sides so an incidental "HD"/
+// "4K" suffix doesn't dilute an otherwise-exact match.
+function normalizeForScoring(s) {
+  return s
+    .replace(/([a-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([a-z])/g, '$1 $2')
+    .replace(/\b(fhd|uhd|hd|sd|4k|hevc|h265|h264)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function scoreMatch(needle, haystack) {
-  const a = (needle || '').toLowerCase().trim();
-  const b = (haystack || '').toLowerCase().trim();
+  const a = normalizeForScoring((needle || '').toLowerCase().trim());
+  const b = normalizeForScoring((haystack || '').toLowerCase().trim());
   if (!a || !b) return 0;
   if (a === b) return 1;
 
-  // "ITV 1" vs "ITV1", "Sky Sport1" vs "SkySport 1" — a bare spacing
-  // difference around a trailing number is an extremely common naming
-  // variation between an M3U and a catalog, and neither whole-word
-  // containment nor token overlap catches it (the tokens genuinely
-  // differ: "itv"/"1" vs the single token "itv1").
+  // A residual spacing/punctuation-only difference after normalization
+  // (e.g. "Sky Sport1" vs "Sky-Sport 1") — neither whole-word containment
+  // nor token overlap catches this (the tokens can still differ in how
+  // they're split), but the identity is unambiguous.
   const collapsedA = collapseAlnum(a);
   const collapsedB = collapseAlnum(b);
   if (collapsedA && collapsedA === collapsedB) return 0.95;
@@ -243,28 +259,29 @@ export function scoreMatch(needle, haystack) {
   // International" fully containing the query "History Channel" (2/3
   // words) can outscore the actual right channel just named "History"
   // (1/2 words), purely because "Channel" is a free word to match on.
+  let score;
   if (shorterStr.length >= 4 && containsAsWholeWord(longerStr, shorterStr)) {
     const matchedWeight = shorterTokens.reduce((sum, t) => sum + genericTokenWeight(t), 0);
-    return matchedWeight / longerTokens.length;
+    score = matchedWeight / longerTokens.length;
+  } else {
+    const setB = new Set(tokensB);
+    let overlap = 0;
+    for (const token of tokensA) {
+      if (setB.has(token)) overlap += genericTokenWeight(token);
+    }
+    score = overlap / Math.max(tokensA.length, tokensB.length);
   }
 
-  const setB = new Set(tokensB);
-  let overlap = 0;
-  for (const token of tokensA) {
-    if (setB.has(token)) overlap += genericTokenWeight(token);
-  }
-
-  const score = overlap / Math.max(tokensA.length, tokensB.length);
-
-  // "Fox Sports 502" vs "Fox Sports 501" share everything except the one
-  // token that actually distinguishes them. iptv-org's catalog only has
-  // a handful of the numbered Fox Sports AU channels as dedicated
-  // entries (503, 505, 506) — query for one that isn't (502, 504, 507,
-  // 508...) and "Fox"+"Sports" overlap alone was enough to match the
-  // wrong numbered channel. A real, specific (2+ digit) number token
-  // present on both sides that doesn't match anywhere is a strong signal
-  // these are different channels, not weak evidence to be outweighed by
-  // shared generic words.
+  // "Fox Sports 502" vs "Fox Sports 501" (or "ESPN" vs "ESPN2") share
+  // everything except the one token that actually distinguishes them —
+  // whether that surfaced via whole-word containment or plain token
+  // overlap above. iptv-org's catalog only has a handful of the numbered
+  // Fox Sports AU channels as dedicated entries (503, 505, 506) — query
+  // for one that isn't (502, 504, 507, 508...) and "Fox"+"Sports" overlap
+  // alone was enough to match the wrong numbered channel. A specific
+  // number token present on one side and absent (or different) on the
+  // other is a strong signal these are different channels, not weak
+  // evidence to be outweighed by shared generic words.
   if (hasConflictingNumber(tokensA, tokensB)) {
     return Math.min(score, 0.3);
   }
@@ -273,14 +290,19 @@ export function scoreMatch(needle, haystack) {
 }
 
 function hasConflictingNumber(tokensA, tokensB) {
-  // A 2+ digit number present on one side and absent from the other is a
-  // mismatch whether the other side has a *different* number ("Fox
-  // Sports 502" vs "Fox Sports 501") or no number at all ("Fox Sports
-  // 502" vs "Fox Sports News") — either way, the query was specific
-  // about which numbered channel it wants, and generic word overlap
-  // ("Fox", "Sports") alone shouldn't paper over that.
-  const numsA = tokensA.filter((t) => /^\d{2,}$/.test(t));
-  const numsB = tokensB.filter((t) => /^\d{2,}$/.test(t));
+  // A number present on one side and absent from the other is a mismatch
+  // whether the other side has a *different* number ("Fox Sports 502" vs
+  // "Fox Sports 501", "ITV 1" vs "ITV 2") or no number at all ("Fox
+  // Sports 502" vs "Fox Sports News", "ESPN" vs "ESPN 2") — either way,
+  // the query was specific about which numbered channel it wants, and
+  // generic word overlap ("Fox", "Sports", "ESPN") alone shouldn't paper
+  // over that. This now also catches single-digit numbers (not just 2+) —
+  // safe to widen now that normalizeForScoring splits a glued channel
+  // number like "ITV1" into its own token, which previously kept it out
+  // of this check's reach entirely (it was one token, "itv1", matching
+  // nothing on either side either way).
+  const numsA = tokensA.filter((t) => /^\d+$/.test(t));
+  const numsB = tokensB.filter((t) => /^\d+$/.test(t));
   if (!numsA.length && !numsB.length) return false;
   const setA = new Set(numsA);
   const setB = new Set(numsB);
