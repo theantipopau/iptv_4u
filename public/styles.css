@@ -637,6 +637,11 @@ dialog::backdrop {
   padding: 0.6rem;
 }
 
+.match-item--none {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+}
+
 .match-item h4 {
   margin: 0;
 }

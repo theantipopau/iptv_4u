@@ -6,6 +6,15 @@
   font-size: 0.85rem;
 }
 
+.cross-tab-warning {
+  background: #fdf1dc;
+  border: 1px solid #f0cd8f;
+  color: #7a4c00;
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.9rem;
+  font-size: 0.85rem;
+}
+
 .watch-shell {
   width: min(1400px, 96vw);
   margin: 1.5rem auto 3rem;

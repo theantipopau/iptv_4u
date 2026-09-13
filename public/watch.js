@@ -82,7 +82,9 @@ const el = {
   nowPlayingNextTime: document.getElementById('nowPlayingNextTime'),
   diagnosticsList: document.getElementById('diagnosticsList'),
   copyDiagnosticBtn: document.getElementById('copyDiagnosticBtn'),
-  copyDiagnosticStatus: document.getElementById('copyDiagnosticStatus')
+  copyDiagnosticStatus: document.getElementById('copyDiagnosticStatus'),
+  stopBtn: document.getElementById('stopBtn'),
+  crossTabWarning: document.getElementById('crossTabWarning')
 };
 
 const state = {
@@ -100,8 +102,93 @@ const state = {
   recents: [],
   favoritesOnly: false,
   sleepTimerHandle: null,
-  nowNextInterval: null
+  nowNextInterval: null,
+  heartbeatInterval: null,
+  otherTab: null, // { channelName, since } | null — another tab in this browser currently streaming
+  hiddenAt: null,
+  hiddenReleaseTimer: null,
+  autoReleasedChannel: null // set when hidden-tab release stops playback, so it can be resumed
 };
+
+// --- many IPTV plans allow only 1-2 simultaneous connections. Two things
+// mitigate accidentally burning through them: an explicit Stop button, and
+// a same-browser cross-tab heads-up (BroadcastChannel — this can only see
+// other tabs of this same browser, never other devices, so it's a partial
+// safety net, not a real connection-count guarantee) via a lightweight
+// heartbeat while a tab is actually playing.
+const TAB_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const HEARTBEAT_MS = 20000;
+const OTHER_TAB_STALE_MS = 45000; // covers a tab that closed without sending 'stopped' (crash, force-quit)
+const HIDDEN_RELEASE_MS = 3 * 60 * 1000; // release the connection if backgrounded this long
+
+const crossTabChannel = ('BroadcastChannel' in window) ? new BroadcastChannel('iptv4u-watch') : null;
+
+function renderCrossTabWarning() {
+  if (!el.crossTabWarning) return;
+  if (!state.otherTab) {
+    el.crossTabWarning.hidden = true;
+    el.crossTabWarning.textContent = '';
+    return;
+  }
+  el.crossTabWarning.hidden = false;
+  el.crossTabWarning.textContent = `Another tab in this browser is currently streaming "${state.otherTab.channelName}" — playing a channel here too uses a second connection, which may exceed your provider's connection limit.`;
+}
+
+function broadcastPlaying(channelName) {
+  crossTabChannel?.postMessage({ type: 'playing', tabId: TAB_ID, channelName, at: Date.now() });
+}
+
+function broadcastStopped() {
+  crossTabChannel?.postMessage({ type: 'stopped', tabId: TAB_ID, at: Date.now() });
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  state.heartbeatInterval = setInterval(() => {
+    const channel = state.channels.find((c) => c.index === state.activeIndex);
+    if (channel && (state.status === 'playing' || state.status === 'buffering')) {
+      broadcastPlaying(channel.name);
+    }
+  }, HEARTBEAT_MS);
+}
+
+function stopHeartbeat() {
+  if (state.heartbeatInterval) {
+    clearInterval(state.heartbeatInterval);
+    state.heartbeatInterval = null;
+  }
+}
+
+if (crossTabChannel) {
+  crossTabChannel.addEventListener('message', (event) => {
+    const msg = event.data;
+    if (!msg || msg.tabId === TAB_ID) return; // ignore our own broadcasts
+    if (msg.type === 'playing') {
+      state.otherTab = { channelName: msg.channelName, since: msg.at };
+      renderCrossTabWarning();
+    } else if (msg.type === 'stopped') {
+      state.otherTab = null;
+      renderCrossTabWarning();
+    } else if (msg.type === 'query') {
+      // A just-loaded tab wants to know if anyone's already playing —
+      // reply only if we ourselves are.
+      const channel = state.channels.find((c) => c.index === state.activeIndex);
+      if (channel && (state.status === 'playing' || state.status === 'buffering')) {
+        broadcastPlaying(channel.name);
+      }
+    }
+  });
+  crossTabChannel.postMessage({ type: 'query', tabId: TAB_ID });
+
+  // Self-heals from a tab that closed without ever sending 'stopped'
+  // (crash, force-quit) — a stale "other tab" notice is worse than none.
+  setInterval(() => {
+    if (state.otherTab && Date.now() - state.otherTab.since > OTHER_TAB_STALE_MS) {
+      state.otherTab = null;
+      renderCrossTabWarning();
+    }
+  }, 10000);
+}
 
 function escapeHtml(value) {
   return String(value || '')
@@ -129,6 +216,17 @@ function setOverlay(message, { clickToPlay = false } = {}) {
 
 el.playerOverlay.addEventListener('click', () => {
   if (!el.playerOverlay.classList.contains('player-overlay--tap')) return;
+  if (state.autoReleasedChannel) {
+    // The hidden-tab release fully tore the player down (destroyPlayer),
+    // so there's no source left to just resume playing — the channel
+    // needs to be restarted properly, same as clicking it in the list.
+    const channel = state.autoReleasedChannel;
+    state.autoReleasedChannel = null;
+    playChannel(channel);
+    return;
+  }
+  // Autoplay was merely blocked, not torn down — the source is still
+  // attached, so a plain play() is enough to resume it.
   el.player.play().then(() => {
     setStatus('playing');
     setOverlay(null);
@@ -150,6 +248,8 @@ function clearWatchdog() {
 function destroyPlayer() {
   state.attemptId += 1;
   clearWatchdog();
+  stopHeartbeat();
+  broadcastStopped();
   if (state.hls) {
     state.hls.destroy();
     state.hls = null;
@@ -283,6 +383,8 @@ function attemptPlayback(url, { isUpgradeAttempt = false, originalUrl = url, cha
     if (isUpgradeAttempt) state.diagnostics.httpsUpgradeSucceeded = true;
     setStatus('playing');
     setOverlay(null);
+    if (channelName) broadcastPlaying(channelName);
+    startHeartbeat();
   };
 
   state.watchdogTimer = setTimeout(() => {
@@ -459,6 +561,7 @@ function pushRecent(channel) {
 
 function playChannel(channel) {
   state.activeIndex = channel.index;
+  state.autoReleasedChannel = null; // any pending "resume" now refers to a stale channel
 
   el.nowPlayingName.textContent = channel.name;
   el.nowPlayingGroup.textContent = channel.attrs['group-title'] || '';
@@ -765,6 +868,46 @@ el.goLiveBtn.addEventListener('click', () => {
     el.player.currentTime = seekable.end(seekable.length - 1);
   }
   el.player.play().catch(() => {});
+});
+
+el.stopBtn.addEventListener('click', () => {
+  destroyPlayer();
+  setStatus('idle');
+  setOverlay('Stopped — this connection has been released. Pick a channel to resume.');
+});
+
+// If the tab sits in the background for a while, release the connection
+// rather than silently holding a scarce slot open with nobody watching —
+// this is exactly the "frozen player keeps the slot busy" failure mode
+// some providers warn about. Cancelled if the tab is foregrounded again
+// before the timeout; the overlay offers a one-click resume either way.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    state.hiddenAt = Date.now();
+    state.hiddenReleaseTimer = setTimeout(() => {
+      if (!document.hidden) return; // came back before the timeout fired
+      if (state.status !== 'playing' && state.status !== 'buffering') return;
+      const channel = state.channels.find((c) => c.index === state.activeIndex);
+      state.autoReleasedChannel = channel || null;
+      destroyPlayer();
+      setStatus('paused');
+      setOverlay('Paused to free your connection slot while this tab was in the background.', { clickToPlay: true });
+    }, HIDDEN_RELEASE_MS);
+  } else {
+    if (state.hiddenReleaseTimer) {
+      clearTimeout(state.hiddenReleaseTimer);
+      state.hiddenReleaseTimer = null;
+    }
+    state.hiddenAt = null;
+  }
+});
+
+// Best-effort — the crossTabChannel staleness check (OTHER_TAB_STALE_MS)
+// already covers a tab that vanishes without this firing (crash, force-
+// quit), but this makes another tab's warning clear promptly on a normal
+// close/navigate instead of waiting up to 45s.
+window.addEventListener('pagehide', () => {
+  broadcastStopped();
 });
 
 function clearSleepTimer() {

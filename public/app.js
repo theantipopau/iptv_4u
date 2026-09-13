@@ -704,6 +704,36 @@ function buildMatchCard(match, channel) {
   return card;
 }
 
+// A deliberate "no EPG at all" option — distinct from just closing the
+// dialog without picking anything. Needed because auto-match (especially
+// for 24/7 channels) sometimes confidently picks the *wrong* thing, and
+// until now there was no way to say "none of these are right" short of
+// closing the dialog and using the bulk toolbar's "Clear Links" instead.
+function buildNoneCard(channel) {
+  const card = document.createElement('div');
+  card.className = 'match-item match-item--none';
+  card.innerHTML = `
+    <h4>None</h4>
+    <p class="small">Remove any EPG/logo match for this channel — it'll show as "Not linked" until you search or set one manually again.</p>
+    <div class="match-actions">
+      <button class="btn" type="button">Set No EPG (Clear Link)</button>
+    </div>
+  `;
+
+  card.querySelector('button').addEventListener('click', (event) => {
+    event.preventDefault();
+    state.links.delete(channel.index);
+    state.contexts.delete(channel.index);
+    state.errors.delete(channel.index);
+    renderTable();
+    autosave();
+    toast('Cleared — no EPG assigned to this channel.', 'success');
+    el.matchDialog.close();
+  });
+
+  return card;
+}
+
 async function searchForChannel(channel) {
   el.dialogChannelName.textContent = `Searching matches for: ${channel.name}`;
   el.dialogContext.textContent = '';
@@ -737,7 +767,11 @@ async function searchForChannel(channel) {
 
   el.matchList.innerHTML = '';
   if (!result.matches.length) {
-    el.matchList.innerHTML = '<p class="small">No strong matches found. Try lowering source limits or editing channel names.</p>';
+    const empty = document.createElement('p');
+    empty.className = 'small';
+    empty.textContent = 'No strong matches found. Try lowering source limits or editing channel names.';
+    el.matchList.appendChild(empty);
+    el.matchList.appendChild(buildNoneCard(channel));
     renderTable();
     return;
   }
@@ -745,6 +779,7 @@ async function searchForChannel(channel) {
   result.matches.forEach((match) => {
     el.matchList.appendChild(buildMatchCard(match, channel));
   });
+  el.matchList.appendChild(buildNoneCard(channel));
   renderTable();
 }
 

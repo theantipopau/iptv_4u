@@ -17,7 +17,7 @@ Point it at an `.m3u` playlist (an existing XMLTV guide is optional — without 
 5. **Merges** whatever was found — a real schedule, a logo, or a synthesized placeholder schedule for identified 24/7 content — into your XMLTV file, and writes `tvg-logo` back into the M3U.
 6. **Exports** the result as downloadable files, or **publishes** it to a stable URL your player app can point at directly, optionally kept fresh automatically (see below).
 
-The channel table supports sorting (click a column header), bulk actions (select rows → re-match or clear links together), and inline editing — click a `tvg-id` cell, or the small pencil icon on a logo, to set either one manually. A live stats bar in the header tracks how many channels have a full guide, logo-only, or no link at all as you go. Anything you fix manually can be exported as a reusable **channel backlog** (see below) instead of needing the same fix again next time.
+The channel table supports sorting (click a column header), bulk actions (select rows → re-match or clear links together), and inline editing — click a `tvg-id` cell, or the small pencil icon on a logo, to set either one manually. A live stats bar in the header tracks how many channels have a full guide, logo-only, or no link at all as you go. The per-channel "Search" dialog always has a **"None"** option after the candidate list, whether or not any matches were found — for a 24/7 channel that's picked up the wrong show/movie, or any other confidently-wrong auto-match, this clears the link outright instead of leaving you stuck picking the least-wrong of several bad options. Anything you fix manually can be exported as a reusable **channel backlog** (see below) instead of needing the same fix again next time, and — since manual matches are captured as protected overrides at publish time — won't be silently re-guessed away by auto-refresh either (see **Keeping a published playlist fresh automatically**).
 
 ## Architecture
 
@@ -199,6 +199,14 @@ A star toggle per channel and a **favourites-only** filter, plus a horizontal **
 ### Mobile
 
 Touch targets sized to ~44px throughout, `env(safe-area-inset-*)` respected on notched phones, hover states swapped for `:active` below 640px (a stuck hover highlight is a touch-only annoyance, not a desktop one), a side-by-side layout in landscape instead of the default stacked one, keyboard navigation (every channel row and control is a real focus target with a visible focus ring), and `prefers-reduced-motion` honored.
+
+### Connection-limit awareness
+
+Most IPTV plans allow only 1-2 simultaneous connections, and it's easy to accidentally burn through them without realizing — a backgrounded tab left playing, or a second tab open to the same slug. Three mitigations, all client-side (no server involved, since the app has no way to see or control your provider's own connection count):
+
+- **A "Stop" button** in the player toolbar — explicitly tears down the current stream and releases the connection, rather than needing to select another channel or close the tab.
+- **Auto-release when backgrounded**: if the tab sits hidden for 3 minutes while still playing, playback stops on its own with a "tap to resume" prompt — this is exactly the "frozen player keeps a slot busy without your knowledge" failure mode some providers warn about.
+- **Same-browser cross-tab warning**: if you open `/watch` in a second tab of the *same browser* while another tab is already streaming, a banner names which channel and warns that starting playback here uses a second connection. This uses `BroadcastChannel` to coordinate between tabs — it can only see other tabs of this same browser, never another device or a different browser, so it's a partial safety net, not a real connection-count guarantee.
 
 ### Installable as a PWA
 

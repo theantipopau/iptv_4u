@@ -43,11 +43,13 @@
 
       <div id="watchArea" class="watch-area" hidden>
         <div class="watch-player-col">
+          <div id="crossTabWarning" class="cross-tab-warning" hidden></div>
           <div class="player-wrap">
             <video id="player" controls playsinline></video>
             <div id="playerOverlay" class="player-overlay" hidden></div>
           </div>
           <div class="player-toolbar">
+            <button id="stopBtn" class="btn" type="button" title="Stop playback and release this connection">⏹ Stop</button>
             <button id="goLiveBtn" class="btn" type="button" title="Jump to the live edge">⏺ Go Live</button>
             <button id="favBtn" class="btn" type="button" title="Toggle favourite">☆ Favourite</button>
             <label class="sleep-timer">
