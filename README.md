@@ -98,8 +98,8 @@ Every remote fetch (a custom guide URL, an auto-refresh's M3U source, a worker's
 Downloading updated files works, but re-uploading them into a player app every time you re-run a match is tedious. Step 5 in the UI ("Publish") instead saves the final M3U/XML to the server under a slug you choose and gives you back two stable URLs:
 
 ```
-https://iptv4u.matthurley.dev/iptv/matt.m3u
-https://iptv4u.matthurley.dev/epg/matt.xml
+https://iptv4u.matthurley.dev/iptv/yourplaylist.m3u
+https://iptv4u.matthurley.dev/epg/yourepg.xml
 ```
 
 Point TiViMate (or any player that takes a playlist/EPG URL) at those, and re-publishing later updates the same URLs in place — no need to touch the player app again.
