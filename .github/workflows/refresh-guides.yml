@@ -1,0 +1,107 @@
+name: Refresh EPG guide snapshots
+
+# guides/*.xml are point-in-time programme-schedule snapshots (see
+# guides/README.md) — each only carries a few days to a few weeks of
+# programme data before its last <programme> stop time passes, at which
+# point channels matched against it silently degrade to logo-only. This
+# re-downloads each source, re-trims it with the exact same command
+# recorded in guides/README.md, and commits only if the result actually
+# changed and passes a sanity check (expected channel count) — so a
+# transient source outage or format change fails the job loudly instead
+# of silently committing an empty/degraded guide.
+
+on:
+  schedule:
+    # 04:23 UTC daily — an off-the-hour time to avoid GitHub Actions'
+    # shared-runner congestion at common cron slots (00:00, 00:15, ...).
+    - cron: '23 4 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Refresh AU (Fox Sports / Kayo)
+        run: |
+          curl -sL --fail -o /tmp/au1.xml.gz https://epgshare01.online/epgshare01/epg_ripper_AU1.xml.gz
+          gunzip -f /tmp/au1.xml.gz
+          node scripts/trim_au_sports.mjs /tmp/au1.xml guides/au-fox-sports.xml | tee /tmp/au.log
+          grep -q "kept channels: 42 of 42 requested" /tmp/au.log
+
+      - name: Refresh UK (major national channels)
+        run: |
+          curl -sL --fail -o /tmp/uk1.xml.gz https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz
+          gunzip -f /tmp/uk1.xml.gz
+          node scripts/trim_epgshare.mjs /tmp/uk1.xml guides/uk-major.xml "epgshare01 UK (trimmed to major national channels)" \
+            '^BBC\.One\.Lon\.HD' '^BBC\.Two\.HD' '^BBC\.Four\.HD' '^BBC\.News' \
+            '^ITV[1-4]\.HD' '^ITV\.Quiz' \
+            '^Channel\.4(\+1)?\.HD' '^Film4' '^E4\.HD' '^More4' \
+            '^Channel\.5(\+1)?\.HD' \
+            '^Sky\.News\.HD' '^Sky\.Sports' | tee /tmp/uk.log
+          grep -q "kept channels: 21" /tmp/uk.log
+
+      - name: Refresh US (major cable channels)
+        run: |
+          curl -sL --fail -o /tmp/us2.xml.gz https://epgshare01.online/epgshare01/epg_ripper_US2.xml.gz
+          gunzip -f /tmp/us2.xml.gz
+          node scripts/trim_epgshare.mjs /tmp/us2.xml guides/us-major.xml "epgshare01 US (trimmed to major national cable channels)" \
+            '^ESPN(2|8|EWS|U|\.Deportes)?\.(HD\.)?us2$' \
+            '^Fox\.(News.Channel|Business|Sports\.4K|Soccer\.Plus|Deportes)\.HD\.us2$' \
+            '^CNN\.HD\.us2$' '^CNN\.International\.us2$' \
+            '^MSNBC\.HD\.us2$' \
+            '^Discovery\.Channel\.HD\.us2$' \
+            '^History\.HD\.us2$' \
+            '^AMC\.HD\.us2$' \
+            '^FXX?\.HD\.us2$' \
+            '^Bravo\.HD\.us2$' \
+            '^USA\.Network\.HD\.us2$' \
+            '^TNT\.HD\.us2$' '^TBS\.HD\.us2$' \
+            '^Syfy\.HD\.us2$' \
+            '^Lifetime\.HD\.us2$' \
+            '^BET\.HD\.us2$' \
+            '^MTV\.-\.Music\.Television\.HD\.us2$' \
+            '^VH1\.HD\.us2$' \
+            '^Nickelodeon\.HD\.us2$' \
+            '^Disney\.(Channel|Junior|XD)\.HD\.us2$' \
+            '^Cartoon\.Network\.HD\.us2$' \
+            '^Comedy\.Central\.HD\.us2$' \
+            '^TLC\.HD\.\(US\)\.us2$' \
+            '^truTV\.HD\.us2$' \
+            '^Paramount\.Network\.HD\.us2$' \
+            '^Investigation\.Discovery\.HD\.us2$' \
+            '^Hallmark\.Channel\.HD\.us2$' \
+            '^National\.Geographic\.HD\.us2$' | tee /tmp/us.log
+          grep -q "kept channels: 38" /tmp/us.log
+
+      - name: Refresh NZ (Sky Sport + ESPN/ESPN2)
+        run: |
+          curl -sL --fail -o /tmp/sky_full.xml https://nzxmltv.github.io/sky/guide.xml
+          node scripts/trim_epgshare.mjs /tmp/sky_full.xml guides/nz-sky-sport.xml "NZXMLTV Sky (trimmed to Sky Sport 1-9 + ESPN/ESPN2)" "^(5[0-9]|6[01])$" | tee /tmp/nz.log
+          grep -q "kept channels: 12" /tmp/nz.log
+
+      - name: Commit and push if any guide actually changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add guides/au-fox-sports.xml guides/uk-major.xml guides/us-major.xml guides/nz-sky-sport.xml
+          if git diff --cached --quiet; then
+            echo "No guide changes (source data identical to what's already committed) — nothing to commit."
+            exit 0
+          fi
+          git commit \
+            -m "Auto-refresh EPG guide snapshots" \
+            -m "Scheduled regeneration from epgshare01.online / nzxmltv.github.io - see guides/README.md for what each file is and why this exists." \
+            -m "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+          git push

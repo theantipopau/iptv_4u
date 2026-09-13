@@ -2,13 +2,15 @@
 
 Pre-filtered XMLTV guide snapshots, hosted here (via `raw.githubusercontent.com`) specifically because Cloudflare Workers can't reliably fetch their own domain as a subrequest — a guide hosted on this app's own `/epg/<slug>.xml` can't be used as a "custom guide URL" input for this same app on Cloudflare (self-fetch to `*.workers.dev` returns 404, and to a custom domain on the same zone times out with a 522). GitHub Pages/raw content is a genuinely separate origin, so it works fine as an input.
 
+**These regenerate automatically** — [`.github/workflows/refresh-guides.yml`](../.github/workflows/refresh-guides.yml) re-downloads each source and re-trims it daily (04:23 UTC), committing only if the result changed and passes a sanity check (expected channel count). Without this, each file below is only ever as current as whenever it was last hand-regenerated — and since a programme schedule only extends a few days to a few weeks into the future, an un-refreshed guide quietly runs out of data and every channel matched against it silently degrades to logo-only. The manual regeneration commands below still work (e.g. to add a channel or trim a new country) — the workflow runs the identical command on a schedule, nothing more.
+
 ## nz-sky-sport.xml
 
 The 10 Sky Sport NZ channels (Sky Sport Select, 1-9, Premier League) plus ESPN and ESPN2 (channels 60/61 — bundled alongside Sky Sport on Sky Go/Sky Sport Now, not Sky Sport-branded themselves but always shown right after that block), filtered out of [nzxmltv.github.io](https://nzxmltv.github.io)'s much larger (~57MB, all 82 Sky channels) `sky/guide.xml` — which is too large for a Cloudflare Worker to fetch+parse in one request (~128MB per-isolate memory ceiling). Real programme data, not a channel-only stub: ~6,100 programmes as of the snapshot date.
 
 **Use it**: paste `https://raw.githubusercontent.com/theantipopau/iptv_4u/main/guides/nz-sky-sport.xml` into the "Your own EPG/guide URL(s)" field (Step 2), alongside any other guide URLs you're already using.
 
-**This is a point-in-time snapshot, not live-refreshed** — nzxmltv's own guide updates continuously; this file doesn't. Regenerate it periodically: `node scripts/trim_epgshare.mjs sky_full.xml guides/nz-sky-sport.xml "NZXMLTV Sky (trimmed to Sky Sport 1-9 + ESPN/ESPN2)" "^(5[0-9]|6[01])$"` against a fresh copy of `sky/guide.xml` — or point your custom-guide field at the full un-filtered `https://nzxmltv.github.io/sky/guide.xml` directly if you're running this app locally (`npm start`) instead of on Cloudflare — Node has no comparable size ceiling.
+Kept current by the daily workflow (see top of this file). Manual regeneration, if you ever need it sooner: `node scripts/trim_epgshare.mjs sky_full.xml guides/nz-sky-sport.xml "NZXMLTV Sky (trimmed to Sky Sport 1-9 + ESPN/ESPN2)" "^(5[0-9]|6[01])$"` against a fresh copy of `sky/guide.xml` — or point your custom-guide field at the full un-filtered `https://nzxmltv.github.io/sky/guide.xml` directly if you're running this app locally (`npm start`) instead of on Cloudflare — Node has no comparable size ceiling.
 
 ## au-fox-sports.xml
 
