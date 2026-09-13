@@ -112,15 +112,28 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
-function setOverlay(message) {
+function setOverlay(message, { clickToPlay = false } = {}) {
   if (!message) {
     el.playerOverlay.hidden = true;
     el.playerOverlay.textContent = '';
+    el.playerOverlay.classList.remove('player-overlay--tap');
     return;
   }
   el.playerOverlay.hidden = false;
   el.playerOverlay.textContent = message;
+  // When autoplay was blocked, the overlay IS the play button — one clear
+  // tap target, instead of text sitting on top of (and getting confused
+  // with) the native <video controls> play button underneath it.
+  el.playerOverlay.classList.toggle('player-overlay--tap', clickToPlay);
 }
+
+el.playerOverlay.addEventListener('click', () => {
+  if (!el.playerOverlay.classList.contains('player-overlay--tap')) return;
+  el.player.play().then(() => {
+    setStatus('playing');
+    setOverlay(null);
+  }).catch(() => {});
+});
 
 function clearWatchdog() {
   if (state.watchdogTimer) {
@@ -284,7 +297,7 @@ function attemptPlayback(url, { isUpgradeAttempt = false, originalUrl = url, cha
       if (error && error.name === 'NotAllowedError') {
         clearWatchdog();
         setStatus('paused', { category: 'AUTOPLAY_BLOCKED' });
-        setOverlay(ERROR_MESSAGES.AUTOPLAY_BLOCKED);
+        setOverlay(ERROR_MESSAGES.AUTOPLAY_BLOCKED, { clickToPlay: true });
       }
       // Other rejection reasons (e.g. aborted by a fast channel switch)
       // are expected and not worth surfacing as a failure.
@@ -362,7 +375,7 @@ function attemptPlayback(url, { isUpgradeAttempt = false, originalUrl = url, cha
       if (error && error.name === 'NotAllowedError') {
         clearWatchdog();
         setStatus('paused', { category: 'AUTOPLAY_BLOCKED' });
-        setOverlay(ERROR_MESSAGES.AUTOPLAY_BLOCKED);
+        setOverlay(ERROR_MESSAGES.AUTOPLAY_BLOCKED, { clickToPlay: true });
       }
     });
   } else {
@@ -379,27 +392,16 @@ function attemptPlayback(url, { isUpgradeAttempt = false, originalUrl = url, cha
 
   renderDiagnostics();
 
-  // Best-effort, non-blocking content-type probe purely for diagnostics —
-  // never gates playback, and a CORS failure is reported as "unverified",
-  // not "unsupported" (the stream may still play fine via hls.js/mpegts.js,
-  // which fetch it themselves rather than through this page's fetch()).
-  const controller = new AbortController();
-  const probeTimer = setTimeout(() => controller.abort(), 4000);
-  fetch(url, { method: 'GET', mode: 'cors', headers: { Range: 'bytes=0-1023' }, signal: controller.signal })
-    .then((res) => {
-      clearTimeout(probeTimer);
-      if (res.body && res.body.cancel) res.body.cancel().catch(() => {});
-      if (isStale()) return;
-      const contentType = res.headers.get('content-type') || '';
-      state.diagnostics.contentType = contentType || state.diagnostics.contentType;
-      if (contentType) state.diagnostics.delivery = classifyStreamType(url, contentType);
-      renderDiagnostics();
-    })
-    .catch(() => {
-      clearTimeout(probeTimer);
-      // Left as whatever classifyStreamType(url, '') already inferred —
-      // "unverified", not overwritten with a false negative.
-    });
+  // There used to be a background fetch() here purely to read the
+  // Content-Type header for diagnostics. Removed: it opened a second,
+  // fully independent connection to the exact same stream URL — for any
+  // IPTV provider that enforces a concurrent-connection limit (common;
+  // credentials are typically embedded directly in the URL path), that
+  // silently burned one of the viewer's limited slots on every single
+  // channel load, on top of the one hls.js/mpegts.js/the video element
+  // itself was already using. Diagnostics fall back to extension-based
+  // inference (classifyStreamType(url, '')) instead — less precise, but
+  // it costs the provider nothing.
 }
 
 function updateNowPlayingGuide(channel) {
