@@ -548,7 +548,7 @@ export async function exportM3u({ channels, links }) {
 
 const MAX_PUBLISHED_CONTENT_LENGTH = 15 * 1024 * 1024; // 15MB per file
 
-export async function publishFiles(store, slugInput, { m3uContent, xmlContent }) {
+export async function publishFiles(store, slugInput, { m3uContent, xmlContent, overrides }) {
   const slug = slugify(slugInput);
   if (!slug) {
     throw new Error('A valid slug is required (letters, numbers, dashes).');
@@ -563,6 +563,15 @@ export async function publishFiles(store, slugInput, { m3uContent, xmlContent })
 
   if (m3uContent) await store.set(`hosted:${slug}:m3u`, m3uContent);
   if (xmlContent) await store.set(`hosted:${slug}:xml`, xmlContent);
+  // Whatever's manually confirmed at publish time becomes the full set of
+  // protected overrides for this slug going forward — see
+  // getChannelOverrides/runAutoRefresh below for why this exists and how
+  // it's used. An empty object (no manual links this session) is a valid,
+  // deliberate value: it clears any previously-saved overrides rather than
+  // leaving stale ones from an earlier publish in place.
+  if (overrides && typeof overrides === 'object') {
+    await store.set(`overrides:${slug}`, overrides);
+  }
 
   return { slug };
 }
@@ -573,6 +582,24 @@ export async function getHostedFile(store, slugInput, kind) {
   // Published content has no freshness window of its own — it's live
   // until explicitly republished — so always read via getStale.
   return store.getStale(`hosted:${slug}:${kind}`);
+}
+
+// ---- manual-match overrides (protected from auto-refresh) -----------------
+//
+// runAutoRefresh (below) re-matches every channel from scratch on every
+// scheduled run. Without this, any tvg-id/logo a user manually confirmed
+// or corrected in the interactive UI gets silently re-guessed — and
+// potentially overwritten with something worse — on the very next run,
+// with no visible warning that anything changed. Captured at publish time
+// (every currently-manual link, keyed by the channel's raw M3U name — the
+// only reasonably stable identifier available before a channel has been
+// matched at all, since a manual fix is often precisely because the
+// incoming tvg-id was empty or wrong) and consulted before search on every
+// subsequent auto-refresh run.
+export async function getChannelOverrides(store, slugInput) {
+  const slug = slugify(slugInput);
+  if (!slug) return {};
+  return (await store.getStale(`overrides:${slug}`)) || {};
 }
 
 // ---- custom logo uploads ---------------------------------------------------
@@ -656,7 +683,8 @@ export async function saveRefreshConfig(hostedStore, input) {
     lastRunError: existing?.lastRunError || null,
     lastRunChannelCount: existing?.lastRunChannelCount || null,
     lastRunGuideCount: existing?.lastRunGuideCount || null,
-    lastRunLogoCount: existing?.lastRunLogoCount || null
+    lastRunLogoCount: existing?.lastRunLogoCount || null,
+    lastRunOverrideCount: existing?.lastRunOverrideCount || null
   };
 
   await hostedStore.set(`refresh-config:${slug}`, config);
@@ -681,16 +709,29 @@ export async function runAutoRefresh(cache, hostedStore, apiKey, config) {
   try {
     const m3uText = await fetchTextMaybeGzip(config.m3uUrl);
     const channels = parseM3U(m3uText);
+    const overrides = await getChannelOverrides(hostedStore, config.slug);
 
     const links = [];
     let guideCount = 0;
     let logoCount = 0;
     let failedCount = 0;
+    let overrideCount = 0;
 
     // Bounded concurrency: enough to not take forever on a large lineup,
     // low enough to stay a reasonable citizen of both the target hosts
     // and (on Cloudflare) the CPU-time budget for one invocation.
     await runWithConcurrency(channels, 5, async (channel) => {
+      const override = overrides[channel.name];
+      if (override) {
+        // A manually-confirmed match is used as-is, never re-searched —
+        // that's the entire point (see getChannelOverrides above).
+        links.push({ ...override, channelIndex: channel.index });
+        overrideCount += 1;
+        if (override.canMergeGuide) guideCount += 1;
+        else logoCount += 1;
+        return;
+      }
+
       try {
         const result = await searchChannel(cache, apiKey, {
           channelName: channel.name,
@@ -801,7 +842,8 @@ export async function runAutoRefresh(cache, hostedStore, apiKey, config) {
       lastRunChannelCount: channels.length,
       lastRunGuideCount: guideCount,
       lastRunLogoCount: logoCount,
-      lastRunFailedCount: failedCount
+      lastRunFailedCount: failedCount,
+      lastRunOverrideCount: overrideCount
     };
     await hostedStore.set(`refresh-config:${config.slug}`, updated);
     return updated;

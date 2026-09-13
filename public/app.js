@@ -936,9 +936,35 @@ async function publishHosted() {
 
   try {
     const [m3u, xml] = await Promise.all([buildFinalM3U(), buildFinalXML()]);
+
+    // Every currently-manual link becomes a protected override for this
+    // slug — auto-refresh (if configured) will use these as-is instead of
+    // re-matching from scratch, so a manual fix doesn't get silently
+    // undone on the next scheduled run. Keyed by the channel's raw M3U
+    // name since that's the only stable identifier available before a
+    // channel has been matched at all.
+    const overrides = {};
+    for (const link of state.links.values()) {
+      if (!link.manual) continue;
+      const channel = state.m3uChannels.find((c) => c.index === link.channelIndex);
+      if (!channel) continue;
+      overrides[channel.name] = {
+        channelId: link.channelId,
+        channelName: link.channelName,
+        source: link.source,
+        logoUrl: link.logoUrl,
+        guideUrl: link.guideUrl,
+        canMergeGuide: link.canMergeGuide,
+        tmdb: link.tmdb || null,
+        synthesize: !!link.synthesize,
+        score: link.score,
+        manual: true
+      };
+    }
+
     const result = await api('/api/publish', {
       method: 'POST',
-      body: JSON.stringify({ slug, m3uContent: m3u, xmlContent: xml })
+      body: JSON.stringify({ slug, m3uContent: m3u, xmlContent: xml, overrides })
     });
 
     const m3uUrl = `${location.origin}/iptv/${result.slug}.m3u`;
@@ -976,7 +1002,8 @@ function describeRefreshConfig(config) {
   if (config.lastRunAt) {
     const when = new Date(config.lastRunAt).toLocaleString();
     if (config.lastRunStatus === 'ok') {
-      parts.push(`last ran ${when} (${config.lastRunChannelCount ?? '?'} channels, ${config.lastRunGuideCount ?? 0} guide / ${config.lastRunLogoCount ?? 0} logo)`);
+      const overrideNote = config.lastRunOverrideCount ? `, ${config.lastRunOverrideCount} manual override${config.lastRunOverrideCount === 1 ? '' : 's'} preserved` : '';
+      parts.push(`last ran ${when} (${config.lastRunChannelCount ?? '?'} channels, ${config.lastRunGuideCount ?? 0} guide / ${config.lastRunLogoCount ?? 0} logo${overrideNote})`);
     } else {
       parts.push(`last run failed ${when}: ${config.lastRunError || 'unknown error'}`);
     }

@@ -84,7 +84,7 @@ Every route below is implemented once in `shared/epg-service.js` and exposed ide
 | `POST /api/merge-guide` | `{ baseXml, guideUrl, channelId, preferredName?, logoUrl? }` | `{ ok, mergedXml, addedProgrammes, addedChannelId, addedChannelName }` |
 | `POST /api/apply-identity` | `{ baseXml, channelId, channelName?, logoUrl?, synthesize?, title?, overview?, days? }` | `{ ok, mergedXml, addedChannelId, addedProgrammes }` |
 | `POST /api/export-m3u` | `{ channels, links }` | `{ ok, m3u }` |
-| `POST /api/publish` | `{ slug, m3uContent?, xmlContent? }` (at least one content field) | `{ ok, slug }` — then served at `/iptv/<slug>.m3u` and/or `/epg/<slug>.xml` |
+| `POST /api/publish` | `{ slug, m3uContent?, xmlContent?, overrides? }` (at least one content field) — `overrides` is `{ [channelName]: link }` for every currently-manual link; see **Keeping a published playlist fresh automatically** | `{ ok, slug }` — then served at `/iptv/<slug>.m3u` and/or `/epg/<slug>.xml` |
 | `POST /api/refresh-config` | `{ slug, m3uUrl, customGuideUrl?, intervalKey? }` (`intervalKey`: `"6h"`, `"12h"`, `"24h"`, or `null`/omitted for off) | `{ ok, config }` |
 | `GET /api/refresh-config/:slug` | — | `{ ok, config }` (`config: null` if nothing saved for that slug) |
 | `POST /api/refresh-now` | `{ slug }` | Runs the saved config's fetch→match→publish pipeline immediately. `{ ok, config }`, updated with `lastRunAt`/`lastRunStatus`/`lastRunChannelCount`/etc. |
@@ -159,11 +159,13 @@ For channels nothing automatic can resolve at all (a channel number the public c
 
 ## Keeping a published playlist fresh automatically
 
-Step 5 also has an auto-refresh section: give it an M3U **URL** (instead of just a one-off file upload) and a refresh interval, and it periodically re-fetches that URL, re-matches every channel from scratch, and re-publishes under the same slug — no need to come back and re-upload every time your provider updates the lineup.
+Step 5 also has an auto-refresh section: give it an M3U **URL** (instead of just a one-off file upload) and a refresh interval, and it periodically re-fetches that URL, re-matches every channel, and re-publishes under the same slug — no need to come back and re-upload every time your provider updates the lineup.
 
 - **Local**: use "Refresh Now" to trigger it on demand. There's no background scheduler for `npm start` — if you want it automatic locally too, point your own OS-level cron/task scheduler at `POST /api/refresh-now` with `{"slug": "..."}`.
 - **Cloudflare**: a Cron Trigger (`wrangler.toml`'s `[triggers]`, fires hourly) checks every saved config and runs any that are actually due per their own interval — Cloudflare only supports fixed cron schedules, not one per user, hence the hourly tick + due-check rather than a genuinely per-config schedule.
 - Channels are matched with bounded concurrency (5 at a time) and guide files are fetched once per distinct URL per run (not once per channel that happens to resolve to the same guide) — the config, and cache design generally, are built to keep this from blowing out subrequest/CPU budgets even on large lineups. Very large playlists may still want a paid Workers plan; "Refresh Now" is the way to check before relying on the schedule.
+
+**Manual fixes are protected, not re-guessed every run.** Every channel you've manually corrected (an inline `tvg-id` edit, an uploaded logo — anything showing as `(manual)` in the table) is captured as a *channel override* the moment you hit Publish, keyed by the channel's exact M3U name, and stored alongside the published files. Auto-refresh checks this list before matching each channel — if there's an override for it, that's used as-is and the channel is never re-searched, so it can't be silently replaced by a worse (or just different) automatic match on the next scheduled run. The status line under auto-refresh shows how many overrides were applied on the last run (`... , 3 manual overrides preserved`). Overrides are re-captured on every Publish — if you clear a manual fix (e.g. by re-running auto-match over it) and publish again, it stops being protected too, since Publish always saves the *current* set of manual links, not an accumulating history.
 
 ## Watching in the browser
 
