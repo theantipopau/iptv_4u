@@ -104,6 +104,8 @@ https://iptv4u.matthurley.dev/epg/matt.xml
 
 Point TiViMate (or any player that takes a playlist/EPG URL) at those, and re-publishing later updates the same URLs in place — no need to touch the player app again.
 
+The slug is remembered across sessions (autosave, and a saved/loaded project file both carry it) — resuming a previous session shows these URLs and the "Watch Live in Browser" link immediately, without needing to re-publish just to see them again. They're deterministic from the slug alone, so this is just redisplaying known information, not implying anything's been freshly re-published — if you've changed the playlist since the last publish, hit Publish again to actually push the update.
+
 > **These URLs are public and unauthenticated.** Anyone who knows the exact slug can fetch your playlist and channel stream URLs. Pick a slug that isn't trivially guessable if your provider embeds private access tokens in the stream URLs (many IPTV services do) — treat the link like a password, not a username.
 
 Publishing needs somewhere to persist the files: locally that's `.hosted-files/` on disk; on Cloudflare it's the `HOSTED_FILES` KV namespace (below).

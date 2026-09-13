@@ -256,7 +256,8 @@ function serializeState() {
     xmlSummary: state.xmlSummary,
     links: Array.from(state.links.entries()),
     contexts: Array.from(state.contexts.entries()),
-    customGuideUrl: el.customGuideUrl.value.trim()
+    customGuideUrl: el.customGuideUrl.value.trim(),
+    publishSlug: el.publishSlug.value.trim()
   };
 }
 
@@ -269,6 +270,18 @@ function restoreState(data) {
   state.contexts = new Map(data.contexts || []);
   state.errors = new Map();
   el.customGuideUrl.value = data.customGuideUrl || '';
+
+  const slug = (data.publishSlug || '').trim();
+  el.publishSlug.value = slug;
+  // The remembered slug only means the URLs are *known*, not that the
+  // currently-loaded state has actually been published under it yet (or
+  // still matches whatever was published last) — publishStatus is left
+  // blank rather than claiming "Published" outright.
+  if (slug) {
+    showPublishedUrls(slug);
+  } else {
+    el.publishResult.hidden = true;
+  }
 }
 
 function autosave() {
@@ -954,6 +967,18 @@ async function exportXML() {
 
 // ---- publish (hosted M3U/XML for IPTV player apps) -----------------------
 
+// The hosted URLs are entirely deterministic from the slug — no server
+// round-trip needed to know them. Used both right after a real publish
+// and when resuming a session that remembers a slug it was already
+// published under, so the URLs/Watch Live link show up immediately
+// instead of needing a "publish again" just to redisplay them.
+function showPublishedUrls(slug) {
+  el.publishResult.hidden = false;
+  el.publishM3uUrl.value = `${location.origin}/iptv/${slug}.m3u`;
+  el.publishXmlUrl.value = `${location.origin}/epg/${slug}.xml`;
+  el.watchLiveLink.href = `${location.origin}/watch?slug=${encodeURIComponent(slug)}`;
+}
+
 async function publishHosted() {
   if (!state.m3uChannels.length) {
     toast('Load files first.', 'error');
@@ -1002,13 +1027,7 @@ async function publishHosted() {
       body: JSON.stringify({ slug, m3uContent: m3u, xmlContent: xml, overrides })
     });
 
-    const m3uUrl = `${location.origin}/iptv/${result.slug}.m3u`;
-    const xmlUrl = `${location.origin}/epg/${result.slug}.xml`;
-
-    el.publishResult.hidden = false;
-    el.publishM3uUrl.value = m3uUrl;
-    el.publishXmlUrl.value = xmlUrl;
-    el.watchLiveLink.href = `${location.origin}/watch?slug=${encodeURIComponent(result.slug)}`;
+    showPublishedUrls(result.slug);
     el.publishStatus.textContent = 'Published. Point your IPTV app at these URLs:';
     autosave();
     toast('Published.', 'success');
