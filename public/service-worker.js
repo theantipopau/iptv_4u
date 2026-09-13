@@ -4,7 +4,7 @@
 // there always goes straight to the network with no caching involved,
 // regardless of what the ALLOW list below might otherwise suggest.
 
-const CACHE_VERSION = 'iptv4u-shell-v1';
+const CACHE_VERSION = 'iptv4u-shell-v2';
 
 const SHELL_ASSETS = [
   '/',
@@ -66,20 +66,18 @@ self.addEventListener('fetch', (event) => {
 
   if (DENY_PATH_RE.test(url.pathname)) return; // straight to network, no cache involved
 
+  // Network-first: this app ships fixes frequently, so an online viewer
+  // must always get the current shell code/markup rather than whatever
+  // was cached at install time. The cache is only a fallback for when the
+  // network fetch itself fails (genuinely offline).
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const networkFetch = fetch(request).then((response) => {
-        const contentType = response.headers.get('content-type') || '';
-        if (response.ok && !DENY_CONTENT_TYPE_RE.test(contentType)) {
-          const copy = response.clone();
-          caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy)).catch(() => {});
-        }
-        return response;
-      }).catch(() => cached || Response.error());
-
-      // Cache-first for the static shell (fast, and works offline);
-      // falls through to network for anything not yet cached.
-      return cached || networkFetch;
-    })
+    fetch(request).then((response) => {
+      const contentType = response.headers.get('content-type') || '';
+      if (response.ok && !DENY_CONTENT_TYPE_RE.test(contentType)) {
+        const copy = response.clone();
+        caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy)).catch(() => {});
+      }
+      return response;
+    }).catch(() => caches.match(request).then((cached) => cached || Response.error()))
   );
 });

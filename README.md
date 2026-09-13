@@ -212,7 +212,7 @@ Most IPTV plans allow only 1-2 simultaneous connections, and it's easy to accide
 
 ### Installable as a PWA
 
-`manifest.webmanifest` + `service-worker.js` make `/watch` installable on a phone's home screen. The service worker caches the static shell only (HTML/CSS/JS/icons) — it has an explicit **deny-first** rule for anything playlist-, guide-, or stream-related (`/iptv/*`, `/epg/*`, `/api/*`, any response whose `Content-Type` looks like media/manifest data) that always goes straight to the network, never into the cache, regardless of path. Offline, the shell still loads with a clear "live channels need a network connection" banner — it does not pretend to play anything without one.
+`manifest.webmanifest` + `service-worker.js` make `/watch` installable on a phone's home screen. The service worker caches the static shell only (HTML/CSS/JS/icons) — it has an explicit **deny-first** rule for anything playlist-, guide-, or stream-related (`/iptv/*`, `/epg/*`, `/api/*`, any response whose `Content-Type` looks like media/manifest data) that always goes straight to the network, never into the cache, regardless of path. Shell assets themselves are served **network-first**: while online you always get the current deployed code, and the cache is only a fallback when the network request fails — offline, the shell still loads with a clear "live channels need a network connection" banner rather than pretending to play anything without one.
 
 ### Known limitation, not fixable client-side
 
