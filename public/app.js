@@ -1330,6 +1330,11 @@ el.publishBtn.addEventListener('click', () => {
   });
 });
 
+// Persist the slug as soon as it's set, not only after a successful
+// publish — otherwise a session saved before ever clicking Publish (or
+// before this field existed) never carries a slug to restore.
+el.publishSlug.addEventListener('blur', () => autosave());
+
 el.copyM3uUrlBtn.addEventListener('click', () => copyToClipboard(el.publishM3uUrl.value));
 el.copyXmlUrlBtn.addEventListener('click', () => copyToClipboard(el.publishXmlUrl.value));
 
