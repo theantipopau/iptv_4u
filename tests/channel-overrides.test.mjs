@@ -5,6 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { createNodeCache } from '../shared/node-cache.js';
 import { publishFiles, getChannelOverrides, getHostedFile } from '../shared/epg-service.js';
+import { MINIMAL_M3U } from './fixtures.mjs';
 
 // Auto-refresh re-matches every channel from scratch on every scheduled
 // run — these tests cover the storage contract that lets a manually
@@ -36,7 +37,7 @@ describe('publishFiles + getChannelOverrides', () => {
       }
     };
 
-    await publishFiles(store, 'test-slug', { m3uContent: '#EXTM3U\n', overrides });
+    await publishFiles(store, 'test-slug', { m3uContent: MINIMAL_M3U, overrides });
 
     const read = await getChannelOverrides(store, 'test-slug');
     assert.deepEqual(read, overrides);
@@ -48,8 +49,9 @@ describe('publishFiles + getChannelOverrides', () => {
     // guarantees that.
     const store = tempStore();
     const overrides = { A: { channelId: 'a', manual: true } };
-    await publishFiles(store, 'test-slug', { m3uContent: '#EXTM3U\n', overrides });
-    await publishFiles(store, 'test-slug', { m3uContent: '#EXTM3U\n#updated\n' });
+    await publishFiles(store, 'test-slug', { m3uContent: MINIMAL_M3U, overrides });
+    const updated = `${MINIMAL_M3U}#updated\n`;
+    await publishFiles(store, 'test-slug', { m3uContent: updated });
 
     const read = await getChannelOverrides(store, 'test-slug');
     assert.deepEqual(read, overrides);
@@ -61,8 +63,8 @@ describe('publishFiles + getChannelOverrides', () => {
     // A deliberate publish-time snapshot: if nothing is manual anymore,
     // nothing should still be protected from the next auto-refresh.
     const store = tempStore();
-    await publishFiles(store, 'test-slug', { m3uContent: '#EXTM3U\n', overrides: { A: { channelId: 'a', manual: true } } });
-    await publishFiles(store, 'test-slug', { m3uContent: '#EXTM3U\n', overrides: {} });
+    await publishFiles(store, 'test-slug', { m3uContent: MINIMAL_M3U, overrides: { A: { channelId: 'a', manual: true } } });
+    await publishFiles(store, 'test-slug', { m3uContent: MINIMAL_M3U, overrides: {} });
 
     const read = await getChannelOverrides(store, 'test-slug');
     assert.deepEqual(read, {});
@@ -70,7 +72,7 @@ describe('publishFiles + getChannelOverrides', () => {
 
   test('getChannelOverrides returns an empty object for a slug with none saved', async () => {
     const store = tempStore();
-    await publishFiles(store, 'test-slug', { m3uContent: '#EXTM3U\n' });
+    await publishFiles(store, 'test-slug', { m3uContent: MINIMAL_M3U });
     const read = await getChannelOverrides(store, 'test-slug');
     assert.deepEqual(read, {});
   });

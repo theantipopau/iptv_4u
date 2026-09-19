@@ -54,6 +54,9 @@ const el = {
   copyM3uUrlBtn: document.getElementById('copyM3uUrlBtn'),
   copyXmlUrlBtn: document.getElementById('copyXmlUrlBtn'),
   watchLiveLink: document.getElementById('watchLiveLink'),
+  healthCheckBtn: document.getElementById('healthCheckBtn'),
+  compareIdsBtn: document.getElementById('compareIdsBtn'),
+  healthSummary: document.getElementById('healthSummary'),
   statsBar: document.getElementById('statsBar'),
   statTotal: document.getElementById('statTotal'),
   statGuide: document.getElementById('statGuide'),
@@ -69,7 +72,17 @@ const el = {
   autoRefreshInterval: document.getElementById('autoRefreshInterval'),
   saveAutoRefreshBtn: document.getElementById('saveAutoRefreshBtn'),
   refreshNowBtn: document.getElementById('refreshNowBtn'),
-  autoRefreshStatus: document.getElementById('autoRefreshStatus')
+  autoRefreshStatus: document.getElementById('autoRefreshStatus'),
+  allGuidesBtn: document.getElementById('allGuidesBtn'),
+  allGuidesStatus: document.getElementById('allGuidesStatus'),
+  guidesTable: document.getElementById('guidesTable'),
+  enableAutoRefreshBtn: document.getElementById('enableAutoRefreshBtn'),
+  publishSummary: document.getElementById('publishSummary'),
+  attentionBanner: document.getElementById('attentionBanner'),
+  autoRefreshAtHour: document.getElementById('autoRefreshAtHour'),
+  autoRefreshAtHourLabel: document.getElementById('autoRefreshAtHourLabel'),
+  autoRefreshTimeZone: document.getElementById('autoRefreshTimeZone'),
+  autoRefreshTimeZoneLabel: document.getElementById('autoRefreshTimeZoneLabel')
 };
 
 // ---- toasts ----------------------------------------------------------
@@ -130,9 +143,20 @@ async function api(url, options = {}) {
     }
   });
 
-  const json = await response.json();
+  let json = null;
+  try {
+    json = await response.json();
+  } catch {
+    throw new Error(`The server returned a non-JSON response (HTTP ${response.status}).`);
+  }
   if (!response.ok || !json.ok) {
-    throw new Error(json.error || `Request failed: ${response.status}`);
+    // Carry the stage-specific code/details through, so callers can explain
+    // exactly which stage failed instead of showing a generic message.
+    const error = new Error(json.error || `Request failed: ${response.status}`);
+    error.code = json.code || null;
+    error.details = json.details || null;
+    error.status = response.status;
+    throw error;
   }
   return json;
 }
@@ -1028,12 +1052,29 @@ async function publishHosted() {
     });
 
     showPublishedUrls(result.slug);
-    el.publishStatus.textContent = 'Published. Point your IPTV app at these URLs:';
+    const metrics = result.metrics || {};
+    el.publishStatus.textContent = `Published — ${metrics.playlistChannels ?? '?'} channels, ${metrics.epgPrograms ?? 0} programmes (${metrics.epgCurrentOrFuturePrograms ?? 0} current or upcoming). Point your IPTV app at these URLs:`;
     autosave();
     toast('Published.', 'success');
+    // Verify what was actually stored, immediately — the point is to find out
+    // here rather than in TiViMate — and then say what happens next: whether
+    // anything will renew it, and when the schedule it just published runs out.
+    const health = await checkPublishedHealth({ quiet: true });
+    renderPublishSummary({ slug: result.slug, health, warnings: result.warnings || [] });
+    checkAllGuides({ quiet: true });
   } catch (error) {
-    el.publishStatus.textContent = '';
-    toast(error.message, 'error');
+    renderPublishSummary({ slug, error });
+    if (error.code === 'PUBLISH_VALIDATION_FAILED' && error.details?.errors) {
+      const reasons = error.details.errors.map((e) => e.message).join(' ');
+      el.publishStatus.textContent = `Nothing was published — the previous version is still live. ${reasons}`;
+      toast('Publication blocked: see the Publish panel for why.', 'error');
+    } else if (error.code === 'PUBLISH_READBACK_FAILED' || error.code === 'PUBLISH_STORAGE_WRITE_FAILED') {
+      el.publishStatus.textContent = `Nothing was published — the stored files could not be verified (${error.code}). The previous version is still live.`;
+      toast('Publication failed during storage. Nothing was changed.', 'error');
+    } else {
+      el.publishStatus.textContent = '';
+      toast(error.message, 'error');
+    }
   } finally {
     el.publishBtn.disabled = false;
   }
@@ -1045,21 +1086,277 @@ function copyToClipboard(value) {
     .catch(() => toast('Could not copy — select and copy manually.', 'error'));
 }
 
+// ---- published EPG health -------------------------------------------------
+//
+// The panel that would have caught the production incident in one click:
+// TiViMate showing no guide for any channel is a *server-side* condition
+// (an expired or disconnected guide), not something to fix by resetting the
+// player app — so the checks live here, next to the publish button, and are
+// ordered so the guide is verified before anyone is told to refresh it.
+
+const HEALTH_LABELS = {
+  healthy: 'Healthy',
+  degraded: 'Degraded',
+  stale: 'Stale — the guide has run out',
+  invalid: 'Invalid',
+  missing: 'Nothing published'
+};
+
+function healthStatusNote(health) {
+  if (health.status === 'missing') return 'Nothing is published under this slug yet — publish first.';
+  if (health.status === 'invalid') return 'The published files are structurally broken. Republish this slug before touching any player app.';
+  const freshness = health.epg?.freshness;
+  if (freshness === 'expired') {
+    return 'Every programme in the published guide has already ended, so players will show NO EPG for every channel even though the playlist still loads. Re-run the match with current guide sources and publish again.';
+  }
+  if (freshness === 'ending-soon') {
+    return 'The guide still has programmes, but its schedule runs out shortly — republish (or enable auto-refresh) before then, or every channel will lose its EPG when it does.';
+  }
+  if (health.epg && !health.epg.programmes) {
+    return 'No programmes are published for this guide yet — channels will show a logo but no schedule.';
+  }
+  if (health.mapping?.matchedIds === 0) {
+    return 'No playlist id matches any guide channel id — players join the two by exact id, so the guide will appear empty for every channel.';
+  }
+  if (health.status === 'degraded') return 'Usable, with warnings worth reading below.';
+  return 'The playlist and guide are connected and the guide contains current programmes.';
+}
+
+function renderHealth(health, { focusMapping = false } = {}) {
+  const summary = el.healthSummary;
+  summary.hidden = false;
+  summary.replaceChildren();
+
+  const head = document.createElement('div');
+  head.className = 'health-summary__head';
+  const status = document.createElement('span');
+  status.className = `health-summary__status health-summary__status--${health.status}`;
+  status.textContent = HEALTH_LABELS[health.status] || health.status;
+  const slugLine = document.createElement('span');
+  slugLine.className = 'small';
+  slugLine.textContent = `/epg/${health.slug}.xml`;
+  head.append(status, slugLine);
+  summary.appendChild(head);
+
+  const note = document.createElement('p');
+  note.className = 'health-advice small';
+  note.textContent = healthStatusNote(health);
+  summary.appendChild(note);
+
+  const rows = [];
+  if (health.playlist) {
+    rows.push(['Playlist channels', `${health.playlist.channels}`]);
+    rows.push(['Channels with tvg-id', `${health.playlist.channelsWithTvgId} (blank ${health.playlist.channels - health.playlist.channelsWithTvgId}, duplicates ${health.playlist.duplicateIds})`]);
+  }
+  if (health.epg) {
+    rows.push(['Guide channels', `${health.epg.channels}`]);
+    rows.push(['Programmes', `${health.epg.programmes} (current/future ${health.epg.currentOrFutureProgrammes})`]);
+    rows.push(['Programme range', health.epg.earliestStart || health.epg.latestStop
+      ? `${new Date(health.epg.earliestStart).toLocaleString()} → ${new Date(health.epg.latestStop).toLocaleString()}`
+      : 'no programmes']);
+    rows.push(['Guide freshness', health.epg.freshness]);
+  }
+  if (health.mapping) {
+    const coverage = health.playlist?.channelsWithTvgId
+      ? `${Math.round((health.mapping.matchedIds / health.playlist.channelsWithTvgId) * 100)}%`
+      : 'n/a';
+    rows.push(['Matched ids', `${health.mapping.matchedIds} of ${health.playlist?.channelsWithTvgId ?? '?'} ids (${coverage})`]);
+    rows.push(['Channels without EPG', `${health.mapping.playlistIdsWithoutEpg}`]);
+    rows.push(['Programme refs without a channel', `${health.mapping.programmeReferencesWithoutChannel}`]);
+  }
+  if (health.storage) {
+    rows.push(['Active version', health.storage.activeVersion || 'none']);
+    rows.push(['Published at', health.storage.publishedAt ? new Date(health.storage.publishedAt).toLocaleString() : 'unknown']);
+    if (health.storage.lastKnownGoodAvailable) rows.push(['Previous version kept', 'yes — available for rollback']);
+  }
+
+  const list = document.createElement('dl');
+  for (const [label, value] of rows) {
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    list.append(dt, dd);
+  }
+  summary.appendChild(list);
+
+  if (health.warnings?.length) {
+    const heading = document.createElement('p');
+    heading.className = 'small';
+    heading.textContent = focusMapping ? 'Identifier comparison' : 'Warnings';
+    const warnings = document.createElement('ul');
+    for (const warning of health.warnings) {
+      const item = document.createElement('li');
+      item.textContent = warning;
+      warnings.appendChild(item);
+    }
+    summary.append(heading, warnings);
+  }
+}
+
+async function checkPublishedHealth({ focusMapping = false, quiet = false } = {}) {
+  const slug = el.publishSlug.value.trim();
+  if (!slug) {
+    if (!quiet) toast('Set a URL slug in the Publish section first.', 'error');
+    return null;
+  }
+
+  el.healthCheckBtn.disabled = true;
+  el.compareIdsBtn.disabled = true;
+  el.healthSummary.hidden = false;
+  el.healthSummary.replaceChildren();
+  const loading = document.createElement('p');
+  loading.className = 'small';
+  loading.textContent = 'Checking the published files on the server…';
+  el.healthSummary.appendChild(loading);
+
+  let health = null;
+  try {
+    health = await api(`/api/health/epg/${encodeURIComponent(slug)}`);
+    renderHealth(health, { focusMapping });
+    if (quiet) { /* the caller renders the result; no toast */ }
+    else if (health.status === 'healthy') toast('Published playlist and guide look healthy.', 'success');
+    else if (health.status === 'missing') toast('Nothing published under that slug yet.', 'error');
+    else toast(`Published EPG is ${health.status} — see the panel for details.`, 'error');
+  } catch (error) {
+    el.healthSummary.replaceChildren();
+    const failed = document.createElement('p');
+    failed.className = 'small';
+    failed.textContent = `Could not check the published files: ${error.message}`;
+    el.healthSummary.appendChild(failed);
+    if (!quiet) toast(error.message, 'error');
+  } finally {
+    el.healthCheckBtn.disabled = false;
+    el.compareIdsBtn.disabled = false;
+  }
+  // Returned so the publish summary can state the same facts the health panel
+  // just rendered, rather than a second source of truth.
+  return health;
+}
+
+el.healthCheckBtn.addEventListener('click', () => checkPublishedHealth());
+el.compareIdsBtn.addEventListener('click', () => checkPublishedHealth({ focusMapping: true }));
+
 // ---- auto-refresh --------------------------------------------------------
+
+// A short list rather than every IANA zone: the point is to pick the zone the
+// user actually lives in, and typing through 400 options is worse than not
+// offering them. The browser's own zone is added (and selected) when known.
+const REFRESH_TIME_ZONES = [
+  'UTC',
+  'Australia/Sydney',
+  'Australia/Brisbane',
+  'Australia/Adelaide',
+  'Australia/Perth',
+  'Pacific/Auckland',
+  'Asia/Singapore',
+  'Asia/Tokyo',
+  'Asia/Kolkata',
+  'Europe/London',
+  'Europe/Berlin',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles'
+];
+
+function browserTimeZone() {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return zone && REFRESH_TIME_ZONES.includes(zone) ? zone : (zone || 'UTC');
+  } catch {
+    return 'UTC';
+  }
+}
+
+function initRefreshScheduleFields() {
+  const zones = [...REFRESH_TIME_ZONES];
+  const own = browserTimeZone();
+  if (!zones.includes(own)) zones.unshift(own);
+  for (const zone of zones) {
+    const option = document.createElement('option');
+    option.value = zone;
+    option.textContent = zone === own ? `${zone} (your time zone)` : zone;
+    el.autoRefreshTimeZone.appendChild(option);
+  }
+  el.autoRefreshTimeZone.value = own;
+
+  for (let hour = 0; hour < 24; hour += 1) {
+    const option = document.createElement('option');
+    option.value = String(hour);
+    option.textContent = `${String(hour).padStart(2, '0')}:00`;
+    el.autoRefreshAtHour.appendChild(option);
+  }
+  el.autoRefreshAtHour.value = '3';
+
+  el.autoRefreshInterval.addEventListener('change', syncRefreshScheduleFields);
+  syncRefreshScheduleFields();
+}
+
+function syncRefreshScheduleFields() {
+  const dailyAt = el.autoRefreshInterval.value === 'daily-at';
+  el.autoRefreshAtHourLabel.hidden = !dailyAt;
+  el.autoRefreshTimeZoneLabel.hidden = !dailyAt;
+}
+
+/**
+ * The schedule as the form currently describes it — one source of truth for
+ * both Save and the one-click Enable button, so the button can't silently
+ * apply a different schedule from the one on screen.
+ * @returns {{intervalKey: string|null, dailyAtHour: number|null, timeZone: string|null}}
+ */
+function readScheduleFromForm() {
+  if (el.autoRefreshInterval.value === 'daily-at') {
+    return {
+      intervalKey: null,
+      dailyAtHour: Number(el.autoRefreshAtHour.value),
+      timeZone: el.autoRefreshTimeZone.value || 'UTC'
+    };
+  }
+  return {
+    intervalKey: el.autoRefreshInterval.value || null,
+    dailyAtHour: null,
+    timeZone: null
+  };
+}
+
+/**
+ * Human summary of a schedule, from either the form's shape or the server's
+ * `refresh` block — one function so the status line, the dashboard and the
+ * publish checklist can never phrase the same schedule differently.
+ * @returns {string} e.g. 'daily at 03:00 (Australia/Sydney)', 'every 24 hours', or 'off'
+ */
+function scheduleLabel(schedule) {
+  if (!schedule) return 'off';
+  if (Number.isInteger(schedule.dailyAtHour)) {
+    const hour = `${String(schedule.dailyAtHour).padStart(2, '0')}:00`;
+    return `daily at ${hour} (${schedule.timeZone || 'UTC'})`;
+  }
+  if (schedule.intervalKey) return `every ${String(schedule.intervalKey).replace('h', ' hours')}`;
+  return 'off';
+}
 
 function describeRefreshConfig(config) {
   if (!config) return '';
   const parts = [];
-  if (config.intervalKey) parts.push(`Auto-refresh: every ${config.intervalKey.replace('h', ' hours')}`);
-  else parts.push('Auto-refresh: off');
+  const label = scheduleLabel(config);
+  parts.push(label === 'off' ? 'Auto-refresh: off' : `Auto-refresh: ${label}`);
 
   if (config.lastRunAt) {
     const when = new Date(config.lastRunAt).toLocaleString();
     if (config.lastRunStatus === 'ok') {
       const overrideNote = config.lastRunOverrideCount ? `, ${config.lastRunOverrideCount} manual override${config.lastRunOverrideCount === 1 ? '' : 's'} preserved` : '';
-      parts.push(`last ran ${when} (${config.lastRunChannelCount ?? '?'} channels, ${config.lastRunGuideCount ?? 0} guide / ${config.lastRunLogoCount ?? 0} logo${overrideNote})`);
+      const programNote = config.lastRunProgramCount != null
+        ? `, ${config.lastRunProgramCount} programmes (${config.lastRunCurrentOrFutureCount ?? 0} current/upcoming)`
+        : '';
+      parts.push(`last ran ${when} (${config.lastRunChannelCount ?? '?'} channels, ${config.lastRunGuideCount ?? 0} guide / ${config.lastRunLogoCount ?? 0} logo${programNote}${overrideNote})`);
     } else {
+      // A blocked publication is reported with its stage-specific reason, and
+      // explicitly states that the previous guide is untouched.
       parts.push(`last run failed ${when}: ${config.lastRunError || 'unknown error'}`);
+      if (config.lastRunErrorCode === 'PUBLISH_VALIDATION_FAILED') {
+        parts.push('nothing was published — the previous version is still live');
+      }
     }
   } else {
     parts.push('never run yet');
@@ -1087,11 +1384,21 @@ async function saveAutoRefreshConfig() {
         slug,
         m3uUrl,
         customGuideUrl: el.customGuideUrl.value.trim(),
-        intervalKey: el.autoRefreshInterval.value || null
+        ...readScheduleFromForm()
       })
     });
     el.autoRefreshStatus.textContent = describeRefreshConfig(result.config);
-    toast('Auto-refresh config saved.', 'success');
+    const saved = scheduleLabel(result.config);
+    if (saved !== 'off') {
+      toast(`Auto-refresh saved — ${saved}.`, 'success');
+    } else {
+      // Saying "saved" for a config that is never due is how someone ends up
+      // believing their guide is on a schedule when nothing will ever run.
+      toast('Saved, but with no interval set — this slug will NOT be refreshed automatically, and its guide will still expire.', 'error');
+    }
+    // The whole point of enabling this is that the guide stays current, so
+    // report the new state rather than assuming the user trusts the toast.
+    if (saved !== 'off') checkAllGuides({ quiet: true });
   } catch (error) {
     toast(error.message, 'error');
   } finally {
@@ -1120,6 +1427,347 @@ async function refreshNow() {
     toast(error.message, 'error');
   } finally {
     el.refreshNowBtn.disabled = false;
+  }
+}
+
+// ---- published guides & freshness dashboard -----------------------------
+//
+// One row per published slug. The two questions that matter are separate: how
+// much schedule the guide has left, and whether anything will renew it. A
+// guide that is fresh but has no auto-refresh is still a guide that is going
+// to break on its own, and until now nothing in the UI ever said so.
+
+function formatDuration(ms) {
+  if (ms == null || !Number.isFinite(ms)) return 'unknown';
+  const past = ms < 0;
+  const abs = Math.abs(ms);
+  const minutes = Math.round(abs / 60000);
+  const text = minutes < 60
+    ? `${minutes} min`
+    : minutes < 60 * 48
+      ? `${Math.round(minutes / 60)} h`
+      : `${Math.round(minutes / (60 * 24))} d`;
+  return past ? `${text} ago` : `${text}`;
+}
+
+/**
+ * "Guide expires in 3.2 days" / "Guide expired 17 hours ago" — the countdown
+ * that makes an expiry legible while there is still time to act on it.
+ * @param {{inMs: number|null, expired: boolean, at: string|null}|null|undefined} expiry
+ */
+function formatExpiry(expiry) {
+  if (!expiry || expiry.inMs == null || !Number.isFinite(expiry.inMs)) return { kind: 'unknown', text: 'Guide expiry: unknown' };
+  const abs = Math.abs(expiry.inMs);
+  const days = abs / 86400000;
+  const value = days >= 1
+    ? `${days.toFixed(1)} days`
+    : `${Math.max(1, Math.round(abs / 3600000))} hours`;
+  if (expiry.expired) return { kind: 'expired', text: `Guide expired: ${value} ago` };
+  return { kind: days < 1 ? 'urgent' : 'ok', text: `Guide expires in: ${value}` };
+}
+
+/**
+ * The checklist shown immediately after a Publish. A guide that was written
+ * successfully but has nothing scheduled to renew it is the single most
+ * likely way to end up with a dead EPG, so it is stated as loudly as the
+ * successes are, in the one place the user is already looking.
+ * @param {{slug: string, health: Object|null, warnings: Array, error: Error|null}} input
+ */
+function renderPublishSummary({ slug, health, warnings = [], error = null }) {
+  const summary = el.publishSummary;
+  summary.hidden = false;
+  summary.replaceChildren();
+
+  const line = (symbol, text, kind = 'ok') => {
+    const row = document.createElement('p');
+    row.className = `publish-summary__row publish-summary__row--${kind}`;
+    row.textContent = `${symbol} ${text}`;
+    return row;
+  };
+
+  if (error) {
+    summary.appendChild(line('⚠', `Not published: ${error.message}`, 'bad'));
+    return;
+  }
+
+  summary.appendChild(line('✅', 'Published', 'ok'));
+  if (health?.playlist) summary.appendChild(line('✅', `Playlist healthy — ${health.playlist.channels} channels`, 'ok'));
+  if (health?.epg) {
+    summary.appendChild(line('✅', `Guide healthy — ${health.epg.channels} channels, ${health.epg.programmes} programmes (${health.epg.currentOrFutureProgrammes} current or upcoming)`, 'ok'));
+  }
+
+  const expiry = formatExpiry(health?.expiry);
+  if (health?.expiry?.inMs != null) {
+    summary.appendChild(line(expiry.kind === 'expired' ? '⚠' : '•', expiry.text, expiry.kind === 'expired' ? 'bad' : expiry.kind === 'urgent' ? 'warn' : 'ok'));
+  }
+
+  const refresh = health?.refresh;
+  if (refresh?.enabled) {
+    summary.appendChild(line('✅', `Auto-refresh enabled — ${scheduleLabel(refresh)}`, 'ok'));
+    summary.appendChild(line('•', refresh.nextRunAt
+      ? `Next refresh: ${new Date(refresh.nextRunAt).toLocaleString()}`
+      : refresh.lastRunAt
+        ? `Last refresh: ${new Date(refresh.lastRunAt).toLocaleString()}`
+        : 'Next refresh: due now (the scheduler checks hourly)', 'ok'));
+  } else if (refresh?.paused) {
+    summary.appendChild(line('⚠', 'No auto-refresh will run — a config is saved with its interval set to Off', 'bad'));
+  } else {
+    // Mark it, say how long it has, and put the fix one click away.
+    summary.appendChild(line('⚠', `No auto-refresh configured — this slug is marked WILL EXPIRE`, 'bad'));
+    const enable = document.createElement('button');
+    enable.type = 'button';
+    enable.className = 'btn primary';
+    enable.textContent = 'Enable Auto Refresh Now';
+    enable.addEventListener('click', () => enableAutoRefresh().catch((err) => toast(err.message, 'error')));
+    summary.appendChild(enable);
+  }
+
+  for (const warning of warnings) {
+    if (warning.code === 'GUIDE_WILL_EXPIRE_WITHOUT_REFRESH') continue; // already stated above
+    summary.appendChild(line('⚠', warning.message, 'warn'));
+  }
+  if (warnings.some((warning) => warning.code === 'GUIDE_WILL_EXPIRE_WITHOUT_REFRESH')) {
+    summary.appendChild(line('⚠', 'This guide appears healthy but will eventually expire unless auto-refresh is enabled.', 'bad'));
+  }
+}
+
+/**
+ * One-click enrol: uses the M3U source URL from the auto-refresh panel if it's
+ * already filled in, otherwise sends the user straight to that field rather
+ * than to another screen or to the documentation.
+ */
+async function enableAutoRefresh() {
+  const slug = el.publishSlug.value.trim();
+  if (!slug) {
+    toast('Set a URL slug in the Publish section first.', 'error');
+    return;
+  }
+  const m3uUrl = el.autoRefreshM3uUrl.value.trim();
+  if (!m3uUrl) {
+    el.autoRefreshM3uUrl.focus();
+    el.autoRefreshM3uUrl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    toast('Paste your provider\u2019s M3U URL here, then press Enable Auto Refresh again — that\u2019s the source the scheduled refresh re-reads.', 'error');
+    return;
+  }
+
+  // Whatever the schedule panel currently says — including a fixed time of
+  // day — so this button can't apply something different from what's on screen.
+  const schedule = readScheduleFromForm();
+  const effective = schedule.dailyAtHour !== null || schedule.intervalKey ? schedule : { intervalKey: '24h', dailyAtHour: null, timeZone: null };
+
+  el.enableAutoRefreshBtn.disabled = true;
+  try {
+    await api('/api/refresh-config', {
+      method: 'POST',
+      body: JSON.stringify({ slug, m3uUrl, customGuideUrl: el.customGuideUrl.value.trim(), ...effective })
+    });
+    toast(`Auto-refresh enabled for ${slug} (${scheduleLabel(effective)}).`, 'success');
+    // Re-render the checklist with what the server now says, so the warning
+    // that prompted the click is visibly gone rather than left on screen.
+    const health = await checkPublishedHealth({ quiet: true });
+    if (health?.published) renderPublishSummary({ slug, health, warnings: [] });
+    await checkAllGuides({ quiet: true });
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    el.enableAutoRefreshBtn.disabled = false;
+  }
+}
+
+// Column order matters: the countdown and the renewal state come before the
+// historical detail, because those are the two things that decide whether the
+// guide still works tomorrow.
+const GUIDE_COLUMNS = ['Slug', 'Guide age', 'Expiry countdown', 'Current/future', 'Auto-refresh', 'Last refresh', 'Next refresh', 'Status'];
+
+function renderGuidesTable(report) {
+  const table = el.guidesTable;
+  table.hidden = false;
+  table.replaceChildren();
+
+  if (!report.slugs?.length) {
+    const empty = document.createElement('p');
+    empty.className = 'small';
+    empty.textContent = 'Nothing has been published yet — publish a slug and it will appear here.';
+    table.appendChild(empty);
+    renderAttentionBanner(report);
+    return;
+  }
+
+  const element = document.createElement('table');
+  const head = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  for (const label of GUIDE_COLUMNS) {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.textContent = label;
+    headRow.appendChild(th);
+  }
+  head.appendChild(headRow);
+  element.appendChild(head);
+
+  const body = document.createElement('tbody');
+  for (const row of report.slugs) {
+    const tr = document.createElement('tr');
+
+    const slug = document.createElement('th');
+    slug.scope = 'row';
+    slug.textContent = row.slug;
+    tr.appendChild(slug);
+
+    const age = document.createElement('td');
+    // Three different situations, three different words: there is no guide
+    // (nothing dated to show), the guide's age isn't recoverable, or an actual
+    // number.
+    age.textContent = row.published && row.hasGuide === false
+      ? 'no guide'
+      : row.guideAgeMs == null ? 'not recorded' : formatDuration(row.guideAgeMs);
+    tr.appendChild(age);
+
+    const expiryCell = document.createElement('td');
+    const expiry = formatExpiry(row.expiry);
+    expiryCell.className = `guides-table__expiry guides-table__expiry--${expiry.kind}`;
+    expiryCell.textContent = expiry.kind === 'unknown' ? 'unknown' : expiry.text.replace(/^Guide /, '');
+    tr.appendChild(expiryCell);
+
+    const current = document.createElement('td');
+    current.textContent = row.published && row.hasGuide === false
+      ? 'no guide'
+      : row.currentOrFutureProgrammes == null
+        ? 'unknown'
+        : `${row.currentOrFutureProgrammes} of ${row.programmes ?? '?'}`;
+    tr.appendChild(current);
+
+    const refresh = document.createElement('td');
+    // The label is the point of the column: "enabled" and "will expire" must
+    // be impossible to confuse with each other.
+    if (row.renewal === 'auto') refresh.textContent = `Yes — ${scheduleLabel(row.refresh)}`;
+    else if (row.renewal === 'overdue') refresh.textContent = 'Enabled — but not running';
+    else if (row.renewal === 'paused') refresh.textContent = 'Saved but Off — will expire';
+    else if (row.renewal === 'unpublished') refresh.textContent = 'Configured — nothing published';
+    else refresh.textContent = 'No — will expire';
+    tr.appendChild(refresh);
+
+    const last = document.createElement('td');
+    last.textContent = row.refresh?.lastRunAt
+      ? `${new Date(row.refresh.lastRunAt).toLocaleString()}${row.refresh.lastRunStatus === 'error' ? ' (failed)' : ''}`
+      : 'never';
+    tr.appendChild(last);
+
+    const next = document.createElement('td');
+    next.textContent = row.refresh?.nextRunAt ? new Date(row.refresh.nextRunAt).toLocaleString() : (row.refresh?.due && row.refresh?.enabled ? 'due now' : '—');
+    tr.appendChild(next);
+
+    const status = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = `health-summary__status health-summary__status--${row.status}`;
+    badge.textContent = HEALTH_LABELS[row.status] || row.status;
+    status.appendChild(badge);
+    // Status is never conveyed by colour alone: the first warning for the row
+    // is printed next to it.
+    if (row.warnings?.length) {
+      const note = document.createElement('span');
+      note.className = 'small';
+      note.textContent = ` ${row.warnings[0].message}`;
+      status.appendChild(note);
+    }
+    tr.appendChild(status);
+    body.appendChild(tr);
+  }
+  element.appendChild(body);
+  table.appendChild(element);
+
+  // Warnings for other slugs than the one currently selected in the Publish
+  // box would otherwise be invisible — this is the "your other guide died"
+  // alarm.
+  const others = (report.warnings || []).filter((warning) => warning.slug && warning.slug !== el.publishSlug.value.trim());
+  if (others.length) {
+    const list = document.createElement('ul');
+    list.className = 'guides-table__warnings';
+    for (const warning of others) {
+      const item = document.createElement('li');
+      item.textContent = `${warning.slug}: ${warning.message}`;
+      list.appendChild(item);
+    }
+    table.appendChild(list);
+  }
+
+  renderSchedulerNote(report.scheduler);
+  renderAttentionBanner(report);
+}
+
+/**
+ * Scheduler-level status, the one thing no individual slug can report: a
+ * missing Cloudflare Cron Trigger leaves every config looking correctly
+ * "enabled" while nothing executes it.
+ * @param {Object|undefined} scheduler
+ */
+function renderSchedulerNote(scheduler) {
+  if (!scheduler || scheduler.observed === null || scheduler.observed === undefined) return;
+  const note = document.createElement('p');
+  note.className = `small guides-table__scheduler guides-table__scheduler--${scheduler.observed ? 'running' : 'missing'}`;
+  // "Never run" and "not running when due" are different faults with the same
+  // cause, so name the one that actually applies.
+  const reason = scheduler.overdue?.length
+    ? `enabled but not run when due: ${scheduler.overdue.join(', ')}`
+    : `never run: ${scheduler.neverRun.join(', ')}`;
+  note.textContent = scheduler.observed
+    ? `Auto-refresh scheduler: running — ${scheduler.enabledConfigs} enabled config(s), last run ${scheduler.lastRunAt ? new Date(scheduler.lastRunAt).toLocaleString() : 'n/a'}.`
+    : `Auto-refresh scheduler: NOT OBSERVED — ${reason}. On Cloudflare, check Settings → Trigger events for the 0 * * * * Cron Trigger; locally, check IPTV4U_NO_SCHEDULER is not set.`;
+  el.guidesTable.appendChild(note);
+}
+
+/**
+ * A standing warning above the Publish panel for anything already broken, so
+ * existing slugs are surfaced the moment the app loads rather than only when
+ * someone thinks to click the dashboard button.
+ * @param {Object} report
+ */
+function renderAttentionBanner(report) {
+  const banner = el.attentionBanner;
+  const attention = report?.attention || {};
+  const problems = [];
+  if (attention.expired) problems.push(`${attention.expired} guide(s) have already expired — players will show no EPG for every channel`);
+  if (attention.expiringSoon) problems.push(`${attention.expiringSoon} guide(s) run out within 12 hours`);
+  if (attention.noRefresh) problems.push(`${attention.noRefresh} published slug(s) have no auto-refresh and will expire on their own`);
+  if (attention.overdue) problems.push(`${attention.overdue} slug(s) have auto-refresh enabled but nothing is running it`);
+
+  if (!problems.length) {
+    banner.hidden = true;
+    banner.replaceChildren();
+    return;
+  }
+  banner.hidden = false;
+  banner.replaceChildren();
+  const heading = document.createElement('strong');
+  heading.textContent = 'Needs attention:';
+  const list = document.createElement('ul');
+  for (const problem of problems) {
+    const item = document.createElement('li');
+    item.textContent = problem;
+    list.appendChild(item);
+  }
+  banner.append(heading, list);
+}
+
+async function checkAllGuides({ quiet = false } = {}) {
+  el.allGuidesBtn.disabled = true;
+  if (!quiet) el.allGuidesStatus.textContent = 'Checking every published slug…';
+  try {
+    const report = await api('/api/health/epg');
+    renderGuidesTable(report);
+    el.allGuidesStatus.textContent = `${report.count} published slug(s) — overall ${HEALTH_LABELS[report.status] || report.status}.`;
+    if (!quiet) {
+      if (report.status === 'healthy') toast('Every published guide is fresh and has current programmes.', 'success');
+      else if (report.status === 'stale') toast('At least one published guide has expired — see the table below.', 'error');
+      else toast('Some published guides need attention — see the table below.', 'error');
+    }
+    return report;
+  } catch (error) {
+    el.allGuidesStatus.textContent = '';
+    if (!quiet) toast(error.message, 'error');
+    return null;
+  } finally {
+    el.allGuidesBtn.disabled = false;
   }
 }
 
@@ -1351,6 +1999,27 @@ el.refreshNowBtn.addEventListener('click', () => {
     toast(error.message, 'error');
   });
 });
+
+el.allGuidesBtn.addEventListener('click', () => {
+  checkAllGuides().catch((error) => {
+    console.error(error);
+    toast(error.message, 'error');
+  });
+});
+
+el.enableAutoRefreshBtn.addEventListener('click', () => {
+  enableAutoRefresh().catch((error) => {
+    console.error(error);
+    toast(error.message, 'error');
+  });
+});
+
+initRefreshScheduleFields();
+
+// Audit every published slug as soon as the app loads, so an already-expired or
+// unrenewed guide is announced instead of waiting to be asked about. Quiet: a
+// first-time visitor with nothing published should see no error at all.
+checkAllGuides({ quiet: true }).catch(() => {});
 
 el.saveProjectBtn.addEventListener('click', () => {
   saveProjectFile();

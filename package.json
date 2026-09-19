@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "worker:dev": "wrangler dev",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test \"tests/*.test.mjs\"",
+    "test:watch": "node --test --watch \"tests/*.test.mjs\"",
+    "diagnose": "node scripts/diagnose.mjs"
   },
   "dependencies": {
     "express": "^4.21.2",

@@ -32,6 +32,19 @@ import {
   parseCustomGuideUrls
 } from './core.js';
 import { fetchWithTimeout, fetchTextMaybeGzip, runWithConcurrency } from './fetch-utils.js';
+import {
+  analyzePlaylist,
+  analyzeGuide,
+  compareIdentifiers,
+  assessPublication,
+  guideFreshness,
+  manifestFreshness,
+  healthStatus,
+  sha256Hex,
+  quickHash,
+  slugHash
+} from './validate.js';
+import { logEvent } from './log.js';
 
 const WORKERS_TXT_URL = 'https://raw.githubusercontent.com/iptv-org/epg/master/workers.txt';
 const IPTV_API_MAX_AGE = 6 * 60 * 60 * 1000;
@@ -406,12 +419,15 @@ export async function mergeGuide({ baseXml, guideUrl, channelId, preferredName, 
   const guideXml = await fetchTextMaybeGzip(guideUrl);
   const guide = parseXmlTv(guideXml);
 
-  const matchedChannel = guide.channels.find((c) => c.id === channelId) ||
-    guide.channels.find((c) => c.names.some((n) => scoreMatch(preferredName || '', n) > 0.9));
+  // Exact-id only (see resolveGuideChannel): the id written into the M3U for
+  // this channel is `channelId`, so the XMLTV channel node added here must use
+  // the same id or the two files are disconnected for that channel.
+  const matchedChannel = resolveGuideChannel(guide, channelId, preferredName);
 
   if (!matchedChannel) {
-    const err = new Error(`Channel ${channelId} not found in selected guide.`);
+    const err = new Error(`Channel "${channelId}" was not found in the selected guide, so no guide channel was added (the playlist's tvg-id for this channel is unchanged).`);
     err.status = 404;
+    err.code = 'GUIDE_CHANNEL_NOT_FOUND';
     throw err;
   }
 
@@ -548,21 +564,178 @@ export async function exportM3u({ channels, links }) {
 
 const MAX_PUBLISHED_CONTENT_LENGTH = 15 * 1024 * 1024; // 15MB per file
 
-export async function publishFiles(store, slugInput, { m3uContent, xmlContent, overrides }) {
+// Storage keys. Two generations coexist deliberately:
+//
+//   hosted:<slug>:versions:<version>:playlist|epg   validated candidate pair
+//   hosted:<slug>:manifest                         the single switch to promote
+//   hosted:<slug>:m3u / :xml                       legacy/serving keys
+//
+// The version keys are written first and only promoted via the manifest, so
+// readers that follow the manifest always see a validated *pair* — a crash or
+// a failed second write can't leave the M3U from one publication next to the
+// guide from another. The legacy keys are still written (and still the
+// fallback for anything published before this existed), which is what keeps
+// already-published slugs working.
+function manifestKey(slug) {
+  return `hosted:${slug}:manifest`;
+}
+
+function versionKey(slug, version, kind) {
+  return `hosted:${slug}:versions:${version}:${kind}`;
+}
+
+// 'm3u'/'xml' are the kind names the serving routes used historically; both
+// spellings must keep working so an already-published slug (and any external
+// caller) isn't broken by the rename to 'playlist'/'epg'.
+function normalizeKind(kind) {
+  if (kind === 'm3u' || kind === 'playlist') return 'playlist';
+  if (kind === 'xml' || kind === 'epg') return 'epg';
+  throw publishError(`Unknown hosted file kind: ${kind}`, 'HOSTED_KIND_INVALID', 400);
+}
+
+function legacyKey(slug, kind) {
+  return `hosted:${slug}:${normalizeKind(kind) === 'playlist' ? 'm3u' : 'xml'}`;
+}
+
+function publishError(message, code, status = 422) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = status;
+  return error;
+}
+
+/**
+ * Validate a candidate M3U/XMLTV pair and, only if it passes, publish it.
+ *
+ * Refuses to replace what's already live with output that would leave a
+ * player with a broken or empty guide (the exact production failure this
+ * exists to prevent), and verifies every write by reading it back.
+ *
+ * @param {Object} store hosted store adapter
+ * @param {string} slugInput
+ * @param {{m3uContent?: string, xmlContent?: string, overrides?: Object, expectProgrammes?: boolean, now?: number}} input
+ * @returns {Promise<{slug: string, version: string, manifest: Object, warnings: Object[], metrics: Object}>}
+ */
+export async function publishFiles(store, slugInput, { m3uContent, xmlContent, overrides, expectProgrammes = false, now = Date.now() } = {}) {
   const slug = slugify(slugInput);
   if (!slug) {
-    throw new Error('A valid slug is required (letters, numbers, dashes).');
+    throw publishError('A valid slug is required (letters, numbers, dashes).', 'SLUG_INVALID', 400);
   }
   if (!m3uContent && !xmlContent) {
-    throw new Error('Nothing to publish — provide m3uContent and/or xmlContent.');
+    throw publishError('Nothing to publish — provide m3uContent and/or xmlContent.', 'NOTHING_TO_PUBLISH', 400);
   }
   if ((m3uContent && m3uContent.length > MAX_PUBLISHED_CONTENT_LENGTH) ||
       (xmlContent && xmlContent.length > MAX_PUBLISHED_CONTENT_LENGTH)) {
-    throw new Error('File too large to publish (15MB limit per file).');
+    throw publishError('File too large to publish (15MB limit per file).', 'CONTENT_TOO_LARGE', 413);
   }
 
-  if (m3uContent) await store.set(`hosted:${slug}:m3u`, m3uContent);
-  if (xmlContent) await store.set(`hosted:${slug}:xml`, xmlContent);
+  const stage = { slugHash: slugHash(slug) };
+  logEvent('publish.started', { ...stage, hasPlaylist: !!m3uContent, hasGuide: !!xmlContent });
+
+  const previousManifest = await store.getStale(manifestKey(slug));
+  const playlistAnalysis = m3uContent ? analyzePlaylist(m3uContent) : null;
+  const guideAnalysis = xmlContent ? analyzeGuide(xmlContent, { now }) : null;
+  const comparison = playlistAnalysis && guideAnalysis ? compareIdentifiers(playlistAnalysis, guideAnalysis) : null;
+
+  const assessment = assessPublication({
+    playlist: playlistAnalysis,
+    guide: guideAnalysis,
+    comparison,
+    expectProgrammes,
+    previous: previousManifest?.metrics || null,
+    now
+  });
+
+  logEvent('publish.validation.completed', {
+    ...stage,
+    ok: assessment.ok,
+    programCount: assessment.metrics.epgPrograms,
+    channelCount: assessment.metrics.playlistChannels
+  }, assessment.ok ? 'info' : 'warn');
+
+  if (!assessment.ok) {
+    const error = publishError(
+      `Publication blocked — the generated files would leave a player without a working guide: ${assessment.errors.map((e) => e.message).join(' ')}`,
+      'PUBLISH_VALIDATION_FAILED',
+      422
+    );
+    error.details = { errors: assessment.errors, warnings: assessment.warnings, metrics: assessment.metrics };
+    logEvent('publish.validation.failed', { ...stage, errors: assessment.errors.map((e) => e.code) }, 'error');
+    throw error;
+  }
+
+  const version = `v${now.toString(36)}-${(await sha256Hex(`${m3uContent || ''}\u0000${xmlContent || ''}`)).slice(0, 12)}`;
+
+  // 1. Write the candidate pair under version-scoped keys.
+  const candidates = [];
+  if (m3uContent) candidates.push({ kind: 'playlist', content: m3uContent });
+  if (xmlContent) candidates.push({ kind: 'epg', content: xmlContent });
+
+  for (const candidate of candidates) {
+    try {
+      await store.set(versionKey(slug, version, candidate.kind), candidate.content, { strict: true, ttlSeconds: null });
+    } catch (error) {
+      logEvent('publish.storage.write.failed', { ...stage, version, part: candidate.kind, errorCode: error.code, error: error.message }, 'error');
+      throw publishError(`Could not store the ${candidate.kind === 'playlist' ? 'playlist' : 'guide'} (storage write failed). Nothing was published; the previous version is still live.`, 'PUBLISH_STORAGE_WRITE_FAILED', 503);
+    }
+  }
+
+  // 2. Read every candidate back and confirm it is byte-identical. A write
+  //    that silently stored something else (truncation, a size cap, a wrong
+  //    type) is exactly the failure mode that produces "200 OK but no EPG".
+  for (const candidate of candidates) {
+    const readback = await store.getStale(versionKey(slug, version, candidate.kind));
+    if (readback !== candidate.content) {
+      logEvent('publish.storage.readback.failed', { ...stage, version, part: candidate.kind }, 'error');
+      throw publishError('The published files could not be verified after writing (read-back did not match). Nothing was published; the previous version is still live.', 'PUBLISH_READBACK_FAILED', 500);
+    }
+  }
+
+  const contentHashes = {
+    playlist: m3uContent ? await sha256Hex(m3uContent) : null,
+    epg: xmlContent ? await sha256Hex(xmlContent) : null
+  };
+
+  // 3. Promote. The manifest is a single key, so promoting a validated pair
+  //    is one write — Cloudflare KV has no cross-key transaction, so this is
+  //    the closest thing to an atomic switch available, and it is why readers
+  //    resolve content *through* the manifest.
+  const publicationWarnings = [...assessment.warnings];
+  const manifest = {
+    schemaVersion: 2,
+    activeVersion: version,
+    previousVersion: previousManifest?.activeVersion || null,
+    publishedAt: new Date(now).toISOString(),
+    playlistBytes: playlistAnalysis ? playlistAnalysis.bytes : null,
+    epgBytes: guideAnalysis ? guideAnalysis.bytes : null,
+    playlistChannels: assessment.metrics.playlistChannels,
+    epgChannels: assessment.metrics.epgChannels,
+    epgPrograms: assessment.metrics.epgPrograms,
+    epgCurrentOrFuturePrograms: assessment.metrics.epgCurrentOrFuturePrograms,
+    earliestProgramStart: assessment.metrics.earliestProgramStart,
+    latestProgramStop: assessment.metrics.latestProgramStop,
+    guideFreshness: assessment.metrics.guideFreshness,
+    identifierMatchCount: assessment.metrics.identifierMatchCount,
+    identifierMatchRatio: playlistAnalysis?.channelsWithTvgId
+      ? Math.round((assessment.metrics.identifierMatchCount / playlistAnalysis.channelsWithTvgId) * 1000) / 1000
+      : null,
+    contentHashes,
+    metrics: assessment.metrics,
+    warnings: assessment.warnings.map((w) => w.code)
+  };
+  // The manifest is written before the expiry warning is computed (it is part
+  // of the promoted pair), so it keeps the validation codes only — the
+  // renewal warning is a property of the publication *and* the saved
+  // schedule, and would go stale in storage the moment a config is added.
+
+  await store.set(manifestKey(slug), manifest, { strict: true, ttlSeconds: null });
+
+  // 4. Legacy/serving keys, kept in step for existing readers and for any
+  //    other code path that still reads hosted:<slug>:m3u|xml directly.
+  for (const candidate of candidates) {
+    await store.set(legacyKey(slug, candidate.kind), candidate.content, { strict: true, ttlSeconds: null });
+  }
+
   // Whatever's manually confirmed at publish time becomes the full set of
   // protected overrides for this slug going forward — see
   // getChannelOverrides/runAutoRefresh below for why this exists and how
@@ -570,19 +743,299 @@ export async function publishFiles(store, slugInput, { m3uContent, xmlContent, o
   // deliberate value: it clears any previously-saved overrides rather than
   // leaving stale ones from an earlier publish in place.
   if (overrides && typeof overrides === 'object') {
-    await store.set(`overrides:${slug}`, overrides);
+    await store.set(`overrides:${slug}`, overrides, { strict: true, ttlSeconds: null });
   }
 
-  return { slug };
+  // The publication is valid and the guide has current programmes — but a
+  // guide is a schedule, so "valid and current" only means it works *today*.
+  // With nothing scheduled to renew it, this exact publication is the start of
+  // the outage: it will keep returning 200 while every channel's EPG silently
+  // empties. Reported as a warning on the publish response (not an error — the
+  // files themselves are fine) so the UI can say so at the moment the user is
+  // looking at the result, which is the only moment they can still act on it.
+  if (guideAnalysis && guideAnalysis.currentOrFutureProgrammes > 0) {
+    const refreshConfig = await store.getStale(refreshConfigKey(slug));
+    if (!refreshConfig?.intervalKey) {
+      publicationWarnings.push({
+        code: 'GUIDE_WILL_EXPIRE_WITHOUT_REFRESH',
+        message: 'This guide appears healthy but will eventually expire unless auto-refresh is enabled.',
+        expiresAt: guideAnalysis.latestStop,
+        expiresInMs: guideAnalysis.latestStop ? Date.parse(guideAnalysis.latestStop) - now : null,
+        paused: !!refreshConfig
+      });
+    }
+  }
+
+  logEvent('publish.completed', {
+    ...stage,
+    version,
+    channelCount: assessment.metrics.playlistChannels,
+    programCount: assessment.metrics.epgPrograms,
+    warnings: publicationWarnings.length
+  });
+
+  return { slug, version, manifest, warnings: publicationWarnings, metrics: assessment.metrics };
 }
 
-export async function getHostedFile(store, slugInput, kind) {
+/**
+ * Resolve published content, preferring the manifest's active version (a
+ * validated pair) and falling back to the legacy keys for anything published
+ * before the manifest existed.
+ * @param {Object} store
+ * @param {string} slugInput
+ * @param {'playlist'|'epg'} kind
+ * @param {{version?: string|null}} [options]
+ * @returns {Promise<{content: string, version: string|null, publishedAt: string|null, source: 'version'|'legacy'} | null>}
+ */
+export async function resolveHostedFile(store, slugInput, kindInput, options = {}) {
   const slug = slugify(slugInput);
   if (!slug) return null;
-  // Published content has no freshness window of its own — it's live
-  // until explicitly republished — so always read via getStale.
-  return store.getStale(`hosted:${slug}:${kind}`);
+  const kind = normalizeKind(kindInput);
+
+  if (!options.version) {
+    const manifest = await store.getStale(manifestKey(slug));
+    if (manifest?.activeVersion) {
+      const content = await store.getStale(versionKey(slug, manifest.activeVersion, kind));
+      if (typeof content === 'string' && content) {
+        return {
+          content,
+          version: manifest.activeVersion,
+          publishedAt: manifest.publishedAt || null,
+          publishedAtSource: manifest.publishedAt ? 'manifest' : null,
+          manifest,
+          source: 'version'
+        };
+      }
+    }
+  } else {
+    const content = await store.getStale(versionKey(slug, options.version, kind));
+    if (typeof content === 'string' && content) {
+      return { content, version: options.version, publishedAt: null, manifest: null, source: 'version' };
+    }
+  }
+
+  // Legacy keys carry no manifest, so there is no recorded publishedAt — but
+  // the stored envelope does carry when it was written, which for a published
+  // file is when it was published. Reporting that beats reporting "unknown"
+  // for every slug that predates manifests (which, on a live deployment, is
+  // all of them until they are republished once).
+  const legacyEntry = typeof store.getEntry === 'function'
+    ? await store.getEntry(legacyKey(slug, kind))
+    : { data: await store.getStale(legacyKey(slug, kind)), updatedAt: null };
+  const legacy = legacyEntry?.data;
+  if (typeof legacy === 'string' && legacy) {
+    return {
+      content: legacy,
+      version: null,
+      publishedAt: legacyEntry.updatedAt ? new Date(legacyEntry.updatedAt).toISOString() : null,
+      publishedAtSource: legacyEntry.updatedAt ? 'legacy-write-time' : null,
+      manifest: null,
+      source: 'legacy'
+    };
+  }
+  return null;
 }
+
+/**
+ * Backwards-compatible string-returning reader (used by callers that only
+ * want the content). Prefer resolveHostedFile where version/health metadata
+ * matters.
+ * @param {Object} store
+ * @param {string} slugInput
+ * @param {'playlist'|'epg'} kind
+ * @returns {Promise<string|null>}
+ */
+export async function getHostedFile(store, slugInput, kind) {
+  const resolved = await resolveHostedFile(store, slugInput, kind);
+  return resolved ? resolved.content : null;
+}
+
+/**
+ * Read-only health report for a published slug: the identifier contract, the
+ * guide's freshness, and what storage is actually serving. Diagnostic only —
+ * never contains stream URLs, credentials or playlist contents.
+ * @param {Object} store
+ * @param {string} slugInput
+ * @param {{now?: number}} [options]
+ * @returns {Promise<Object>}
+ */
+export async function assessPublishedHealth(store, slugInput, options = {}) {
+  const now = options.now ?? Date.now();
+  const slug = slugify(slugInput);
+  const warnings = [];
+
+  if (!slug) {
+    return { status: 'missing', slug: null, published: false, warnings: ['Not a valid slug.'], checkedAt: new Date(now).toISOString() };
+  }
+
+  let manifest = null;
+  let playlist = null;
+  let epg = null;
+  try {
+    manifest = await store.getStale(manifestKey(slug));
+    playlist = await resolveHostedFile(store, slug, 'playlist');
+    epg = await resolveHostedFile(store, slug, 'epg');
+  } catch (error) {
+    return {
+      status: 'missing',
+      slug,
+      published: false,
+      warnings: [`Storage is not readable: ${error.message}`],
+      checkedAt: new Date(now).toISOString()
+    };
+  }
+
+  if (!playlist && !epg) {
+    return { status: 'missing', slug, published: false, warnings: ['Nothing has been published under this slug.'], checkedAt: new Date(now).toISOString() };
+  }
+
+  const playlistAnalysis = playlist ? analyzePlaylist(playlist.content) : null;
+  const guideAnalysis = epg ? analyzeGuide(epg.content, { now }) : null;
+  const comparison = playlistAnalysis && guideAnalysis ? compareIdentifiers(playlistAnalysis, guideAnalysis) : null;
+  const freshness = guideAnalysis ? guideFreshness(guideAnalysis, now) : 'unknown';
+
+  let valid = true;
+  if (playlist && !playlistAnalysis.valid) { valid = false; warnings.push(...playlistAnalysis.errors.map((e) => e.message)); }
+  if (guideAnalysis && !guideAnalysis.validXml) { valid = false; warnings.push(...guideAnalysis.errors.map((e) => e.message)); }
+  if (guideAnalysis && guideAnalysis.validXml && guideAnalysis.errors.length) { warnings.push(...guideAnalysis.errors.map((e) => e.message)); }
+  if (guideAnalysis?.warnings?.length) warnings.push(...guideAnalysis.warnings.map((w) => w.message));
+  if (!epg) warnings.push('No guide is published for this slug — players will show a playlist with no EPG.');
+  if (!playlist) warnings.push('No playlist is published for this slug.');
+  if (comparison && comparison.matchedIdCount === 0 && (playlistAnalysis?.ids.length || 0) > 0) {
+    valid = false;
+    warnings.push('No M3U tvg-id matches any XMLTV <channel id> — players will show an empty guide for every channel.');
+  }
+
+  // Renewal is reported here too, not just in the all-slugs dashboard: "healthy"
+  // about a slug that nothing will ever re-publish is the reassurance that let
+  // the production guide die quietly. Same warning vocabulary as the dashboard
+  // so the two views can never disagree.
+  const refreshConfig = await store.getStale(refreshConfigKey(slug));
+  const schedule = describeRefreshSchedule(refreshConfig, now);
+  const latestStop = guideAnalysis?.latestStop || null;
+  const latestStopMs = latestStop ? Date.parse(latestStop) : NaN;
+  const expiresInMs = Number.isFinite(latestStopMs) ? latestStopMs - now : null;
+  if (freshness === 'expired') warnings.push(freshnessWarning('GUIDE_EXPIRED').message);
+  else if (freshness === 'ending-soon') warnings.push(freshnessWarning('GUIDE_ENDING_SOON').message);
+  const overdue = isAutoRefreshOverdue(refreshConfig, schedule, now);
+  if (schedule.paused) warnings.push(freshnessWarning('AUTO_REFRESH_PAUSED').message);
+  else if (!schedule.enabled) warnings.push(freshnessWarning('NO_AUTO_REFRESH').message);
+  else if (overdue) warnings.push(freshnessWarning('AUTO_REFRESH_OVERDUE').message);
+  else if (schedule.lastRunStatus === 'error') warnings.push(freshnessWarning('AUTO_REFRESH_FAILING').message);
+
+  const status = healthStatus({
+    valid,
+    freshness,
+    warnings: warnings.length,
+    matched: comparison?.matchedIdCount ?? 0,
+    channels: guideAnalysis?.channelCount ?? 0
+  });
+
+  return {
+    status,
+    slug,
+    published: true,
+    refresh: schedule,
+    expiry: {
+      at: latestStop,
+      inMs: expiresInMs,
+      expired: expiresInMs != null && expiresInMs <= 0,
+      expiresWithinHours: expiresInMs != null && expiresInMs > 0 ? Math.round((expiresInMs / 3600000) * 10) / 10 : null
+    },
+    storage: {
+      activeVersion: manifest?.activeVersion || epg?.version || null,
+      publishedAt: manifest?.publishedAt || epg?.publishedAt || null,
+      source: epg?.source || playlist?.source || null,
+      lastKnownGoodAvailable: !!(manifest?.previousVersion)
+    },
+    playlist: playlistAnalysis
+      ? {
+          valid: playlistAnalysis.valid,
+          bytes: playlistAnalysis.bytes,
+          channels: playlistAnalysis.channelCount,
+          channelsWithTvgId: playlistAnalysis.channelsWithTvgId,
+          duplicateIds: playlistAnalysis.duplicateIds.length
+        }
+      : null,
+    epg: guideAnalysis
+      ? {
+          validXml: guideAnalysis.validXml,
+          bytes: guideAnalysis.bytes,
+          channels: guideAnalysis.channelCount,
+          programmes: guideAnalysis.programmeCount,
+          earliestStart: guideAnalysis.earliestStart,
+          latestStop: guideAnalysis.latestStop,
+          currentOrFutureProgrammes: guideAnalysis.currentOrFutureProgrammes,
+          expiredProgrammes: guideAnalysis.expiredProgrammes,
+          freshness,
+          // Countdown data for the UI: "expires in 3.2 days" is what makes an
+          // imminent expiry legible before it happens.
+          expiresAt: latestStop,
+          expiresInMs
+        }
+      : null,
+    mapping: {
+      matchedIds: comparison?.matchedIdCount ?? null,
+      matchedIdsWithProgrammes: comparison?.matchedIdsWithProgrammes ?? null,
+      playlistIdsWithoutEpg: comparison?.playlistIdsWithoutEpg ?? null,
+      guideIdsNotInPlaylist: comparison?.guideIdsNotInPlaylist ?? null,
+      programmeReferencesWithoutChannel: guideAnalysis?.danglingProgrammeReferences ?? null
+    },
+    warnings,
+    checkedAt: new Date(now).toISOString()
+  };
+}
+
+/**
+ * Stable validator for a stored document, used to decide whether the live
+ * publication is worth serving or whether the previous version should be
+ * preferred. Exported so the serving routes and the diagnose script share one
+ * definition of "good enough to serve".
+ * @param {'playlist'|'epg'} kind
+ * @param {string} content
+ * @param {number} [now]
+ */
+export function isServableContent(kindInput, content, now = Date.now()) {
+  if (typeof content !== 'string' || !content.trim()) return false;
+  if (normalizeKind(kindInput) === 'playlist') return analyzePlaylist(content).valid;
+  const analysis = analyzeGuide(content, { now });
+  return analysis.validXml && analysis.channelCount > 0;
+}
+
+/**
+ * Resolve the guide's channel entry for a specific channel id — the join that
+ * decides whether the XMLTV id and the M3U tvg-id still agree.
+ *
+ * Only ever returns a channel whose id is *exactly* the requested one. A
+ * name-based fallback that silently resolves to a different id is how the two
+ * files drift apart: the playlist keeps tvg-id=A while the guide gains a
+ * <channel id="B">, and the player shows that channel with no EPG. Guides
+ * that carry programmes but no <channel> node for an id are still handled —
+ * the node is synthesised *for that same id*, which keeps the contract.
+ *
+ * @param {{channels: Array, programmes: Array}} guide
+ * @param {string} channelId
+ * @param {string} [preferredName]
+ * @returns {{id: string, names: string[], raw: Object}|null}
+ */
+export function resolveGuideChannel(guide, channelId, preferredName) {
+  const wanted = String(channelId || '');
+  if (!wanted) return null;
+  const direct = arrify(guide.channels).find((c) => c.id === wanted);
+  if (direct) return direct;
+
+  const hasProgrammes = arrify(guide.programmes).some((p) => p['@_channel'] === wanted);
+  if (hasProgrammes) {
+    return {
+      id: wanted,
+      names: [preferredName || wanted],
+      raw: { '@_id': wanted, 'display-name': [preferredName || wanted] }
+    };
+  }
+  return null;
+}
+
+export { quickHash };
 
 // ---- manual-match overrides (protected from auto-refresh) -----------------
 //
@@ -639,7 +1092,9 @@ export async function uploadLogoAsset(store, { imageBase64, contentType }) {
   }
 
   const id = genLogoId();
-  await store.set(`logo-asset:${id}`, { contentType, imageBase64 });
+  // strict: returning a URL for an image that was never stored is worse than
+  // failing the upload, since the channel would then point at a 404 logo.
+  await store.set(`logo-asset:${id}`, { contentType, imageBase64 }, { strict: true, ttlSeconds: null });
   return { id, url: `/logo/${id}` };
 }
 
@@ -663,6 +1118,30 @@ const REFRESH_INTERVALS_MS = {
   '24h': 24 * 60 * 60 * 1000
 };
 
+// The scheduler ticks on the hour, and a run finishes a few seconds (or a few
+// minutes) *after* the tick that triggered it. Without a tolerance, a "24h"
+// config anchored at 17:02 is not due at the next day's 17:00 tick
+// (23h58m < 24h), so it slips to 18:00 — and then slips another hour the day
+// after that, walking around the clock a hour per day. A tolerance smaller
+// than the tick interval stops the drift without ever double-running.
+const REFRESH_DUE_TOLERANCE_MS = 5 * 60 * 1000;
+
+const DEFAULT_REFRESH_TIME_ZONE = 'UTC';
+
+const REFRESH_CONFIG_PREFIX = 'refresh-config:';
+const MANIFEST_PREFIX = 'hosted:';
+const MANIFEST_SUFFIX = ':manifest';
+
+/**
+ * Storage key for a slug's auto-refresh config. Centralised so the writer,
+ * the reader and the enumerator can never drift apart — a "saved but
+ * unreadable" config is indistinguishable from a missing one from the UI.
+ * @param {string} slug
+ */
+export function refreshConfigKey(slug) {
+  return `${REFRESH_CONFIG_PREFIX}${slug}`;
+}
+
 export async function saveRefreshConfig(hostedStore, input) {
   const slug = slugify(input.slug);
   if (!slug) throw new Error('A valid slug is required.');
@@ -671,12 +1150,32 @@ export async function saveRefreshConfig(hostedStore, input) {
     throw new Error('intervalKey must be one of: 6h, 12h, 24h.');
   }
 
+  const dailyAtHour = input.dailyAtHour === undefined || input.dailyAtHour === null || input.dailyAtHour === ''
+    ? null
+    : Number(input.dailyAtHour);
+  if (dailyAtHour !== null && (!Number.isInteger(dailyAtHour) || dailyAtHour < 0 || dailyAtHour > 23)) {
+    throw new Error('dailyAtHour must be a whole hour from 0 to 23.');
+  }
+  const timeZoneInput = (input.timeZone || '').trim() || null;
+  if (timeZoneInput && !isValidTimeZone(timeZoneInput)) {
+    throw new Error(`Unknown time zone: ${timeZoneInput}.`);
+  }
+
   const existing = await hostedStore.getStale(`refresh-config:${slug}`);
   const config = {
     slug,
     m3uUrl: input.m3uUrl.trim(),
-    customGuideUrl: (input.customGuideUrl || '').trim() || null,
-    intervalKey: input.intervalKey || null,
+    // Omitted means "leave it alone", not "clear it": a caller that only wants
+    // to change the schedule (or the scheduler re-saving after a run) must not
+    // silently drop the user's custom guide sources. Sending '' still clears.
+    customGuideUrl: input.customGuideUrl === undefined || input.customGuideUrl === null
+      ? (existing?.customGuideUrl || null)
+      : ((String(input.customGuideUrl) || '').trim() || null),
+    // A fixed time-of-day and a rolling interval are mutually exclusive: the
+    // fixed time wins, so switching modes can't leave two schedules behind.
+    intervalKey: dailyAtHour !== null ? null : (input.intervalKey || null),
+    dailyAtHour,
+    timeZone: dailyAtHour !== null ? (timeZoneInput || DEFAULT_REFRESH_TIME_ZONE) : null,
     createdAt: existing?.createdAt || Date.now(),
     lastRunAt: existing?.lastRunAt || null,
     lastRunStatus: existing?.lastRunStatus || null,
@@ -684,28 +1183,214 @@ export async function saveRefreshConfig(hostedStore, input) {
     lastRunChannelCount: existing?.lastRunChannelCount || null,
     lastRunGuideCount: existing?.lastRunGuideCount || null,
     lastRunLogoCount: existing?.lastRunLogoCount || null,
-    lastRunOverrideCount: existing?.lastRunOverrideCount || null
+    lastRunOverrideCount: existing?.lastRunOverrideCount || null,
+    lastRunProgramCount: existing?.lastRunProgramCount || null,
+    lastRunCurrentOrFutureCount: existing?.lastRunCurrentOrFutureCount || null,
+    lastRunPublishWarnings: existing?.lastRunPublishWarnings || null,
+    lastRunPublishedVersion: existing?.lastRunPublishedVersion || null,
+    lastRunErrorCode: existing?.lastRunErrorCode || null
   };
 
-  await hostedStore.set(`refresh-config:${slug}`, config);
+  // Saved with no expiry: an auto-refresh config is the only thing standing
+  // between a published guide and silent expiry, so it must not quietly
+  // disappear on its own (it used to inherit 30-day TTL semantics).
+  await hostedStore.set(refreshConfigKey(slug), config, { strict: true, ttlSeconds: null });
   return config;
 }
 
 export async function getRefreshConfig(hostedStore, slugInput) {
   const slug = slugify(slugInput);
   if (!slug) return null;
-  return hostedStore.getStale(`refresh-config:${slug}`);
+  return hostedStore.getStale(refreshConfigKey(slug));
+}
+
+/**
+ * Every saved auto-refresh config in the store. Enumerated from storage
+ * rather than a separate index, so a config that exists is always seen by the
+ * scheduler (an index that drifts is how "registered but never executed").
+ * @param {Object} store
+ */
+export async function listRefreshConfigs(store) {
+  const entries = await store.list(REFRESH_CONFIG_PREFIX);
+  return entries
+    .map((entry) => entry.data)
+    .filter((config) => config && config.slug)
+    .sort((a, b) => String(a.slug).localeCompare(String(b.slug)));
+}
+
+/**
+ * Safe description of a slug's refresh schedule, for the UI/health payload.
+ *
+ * `paused` is deliberately distinct from `enabled: false`: a config can be
+ * saved with intervalKey null, which stores fine and is then never due —
+ * the single most likely way for someone to believe auto-refresh is on when
+ * it is not (and exactly why the field exists rather than a bare boolean).
+ * @param {Object|null} config
+ * @param {number} [now]
+ */
+export function describeRefreshSchedule(config, now = Date.now()) {
+  if (!config) {
+    return {
+      configured: false,
+      enabled: false,
+      paused: false,
+      mode: 'off',
+      intervalKey: null,
+      intervalMs: null,
+      dailyAtHour: null,
+      timeZone: DEFAULT_REFRESH_TIME_ZONE,
+      lastRunAt: null,
+      nextRunAt: null,
+      due: false,
+      lastRunStatus: null,
+      lastRunError: null,
+      lastRunErrorCode: null
+    };
+  }
+  const dailyAtHour = Number.isInteger(config.dailyAtHour) ? config.dailyAtHour : null;
+  const timeZone = config.timeZone && isValidTimeZone(config.timeZone) ? config.timeZone : DEFAULT_REFRESH_TIME_ZONE;
+  const intervalMs = dailyAtHour === null && config.intervalKey ? REFRESH_INTERVALS_MS[config.intervalKey] : null;
+  const mode = dailyAtHour !== null ? 'daily-at' : intervalMs ? 'interval' : 'off';
+  const effective = { ...config, dailyAtHour, timeZone };
+  let nextRunAt = null;
+  if (mode === 'interval' && config.lastRunAt) nextRunAt = new Date(config.lastRunAt + intervalMs).toISOString();
+  if (mode === 'daily-at') nextRunAt = nextDailyAtRun(effective, now);
+  return {
+    configured: true,
+    enabled: mode !== 'off',
+    paused: mode === 'off',
+    mode,
+    intervalKey: mode === 'interval' ? config.intervalKey : null,
+    intervalMs: intervalMs || null,
+    dailyAtHour,
+    timeZone,
+    lastRunAt: config.lastRunAt || null,
+    nextRunAt,
+    due: isRefreshDue(effective, now),
+    lastRunStatus: config.lastRunStatus || null,
+    lastRunError: config.lastRunError || null,
+    lastRunErrorCode: config.lastRunErrorCode || null
+  };
+}
+
+// How long past its interval a config may be before that is treated as evidence
+// the scheduler itself is not running rather than as normal jitter. One tick
+// (an hour on Cloudflare) plus slack, so a config saved moments ago and waiting
+// for the next tick is not reported as a failure.
+const AUTO_REFRESH_OVERDUE_GRACE_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Is an enabled config past due by more than the scheduler's tick, i.e. the
+ * refresh that should have happened hasn't? This is the signal that separates
+ * "nothing is configured" from "something is configured and the thing that
+ * runs it is dead" — a missing Cron Trigger looks exactly like a working
+ * schedule until you compare the clock against `lastRunAt`.
+ * @param {Object|null} config
+ * @param {Object} schedule from describeRefreshSchedule
+ * @param {number} now
+ */
+function isAutoRefreshOverdue(config, schedule, now) {
+  if (!config || !schedule?.enabled) return false;
+  if (schedule.lastRunAt) return now - schedule.lastRunAt > schedule.intervalMs + AUTO_REFRESH_OVERDUE_GRACE_MS;
+  // Enabled but never run at all: after the grace period, the tick is not
+  // reaching this config (newly saved configs are due immediately by design).
+  return config.createdAt ? now - config.createdAt > AUTO_REFRESH_OVERDUE_GRACE_MS : false;
+}
+
+/**
+ * Is this an IANA time zone the runtime understands? (Workers and Node both
+ * ship full ICU, so no time-zone database of our own is needed.)
+ * @param {string} timeZone
+ */
+export function isValidTimeZone(timeZone) {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Calendar/clock parts for an instant in a specific zone. Used to answer "what
+ * time is it *there*, where the user is", which is the only way a chosen
+ * time-of-day can mean what they meant regardless of where the Worker runs.
+ * @param {number} ms
+ * @param {string} [timeZone]
+ */
+export function zonedParts(ms, timeZone) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: timeZone || DEFAULT_REFRESH_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  });
+  const parts = {};
+  for (const part of formatter.formatToParts(new Date(ms))) {
+    if (part.type !== 'literal') parts[part.type] = part.value;
+  }
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+    second: Number(parts.second),
+    // "Which calendar day is it there?" — the unit a once-a-day run is keyed on.
+    dayKey: `${parts.year}-${parts.month}-${parts.day}`
+  };
+}
+
+/**
+ * A fixed-time config runs on the first hourly check *inside* the chosen hour,
+ * and only once per local calendar day.
+ *
+ * "Once per local day" rather than an exact timestamp comparison is deliberate:
+ * it needs no offset arithmetic (so it survives DST changes), and it means a
+ * manual "Refresh Now" earlier that day counts as that day's run instead of
+ * being followed by a second one an hour later.
+ *
+ * Note the tick is hourly, so the run lands within the hour you pick — on the
+ * hour for whole-hour zones, at :30 for half-hour zones like Asia/Kolkata.
+ */
+function isDailyAtDue(config, now) {
+  const timeZone = config.timeZone || DEFAULT_REFRESH_TIME_ZONE;
+  const local = zonedParts(now, timeZone);
+  if (local.hour !== config.dailyAtHour) return false;
+  if (!config.lastRunAt) return true;
+  return zonedParts(config.lastRunAt, timeZone).dayKey !== local.dayKey;
+}
+
+/**
+ * When a fixed-time config will next run, as an ISO timestamp (approximate to
+ * the top of the chosen hour; the actual run is the first tick inside it).
+ */
+function nextDailyAtRun(config, now) {
+  const timeZone = config.timeZone || DEFAULT_REFRESH_TIME_ZONE;
+  const local = zonedParts(now, timeZone);
+  let deltaHours = (config.dailyAtHour - local.hour + 24) % 24;
+  const ranToday = config.lastRunAt ? zonedParts(config.lastRunAt, timeZone).dayKey === local.dayKey : false;
+  if (deltaHours === 0 && ranToday) deltaHours = 24;
+  const msIntoHour = local.minute * 60000 + local.second * 1000 + (now % 1000);
+  return new Date(now + deltaHours * 3600000 - msIntoHour).toISOString();
 }
 
 export function isRefreshDue(config, now = Date.now()) {
-  if (!config || !config.intervalKey) return false;
+  if (!config) return false;
+  if (Number.isInteger(config.dailyAtHour)) return isDailyAtDue(config, now);
+  if (!config.intervalKey) return false;
   const intervalMs = REFRESH_INTERVALS_MS[config.intervalKey];
   if (!intervalMs) return false;
   if (!config.lastRunAt) return true;
-  return now - config.lastRunAt >= intervalMs;
+  return now - config.lastRunAt >= intervalMs - REFRESH_DUE_TOLERANCE_MS;
 }
 
-export async function runAutoRefresh(cache, hostedStore, apiKey, config) {
+export async function runAutoRefresh(cache, hostedStore, apiKey, config, options = {}) {
+  const runAt = options.now ?? Date.now();
   try {
     const m3uText = await fetchTextMaybeGzip(config.m3uUrl);
     const channels = parseM3U(m3uText);
@@ -778,8 +1463,10 @@ export async function runAutoRefresh(cache, hostedStore, apiKey, config) {
         const guide = parseXmlTv(guideXml);
 
         for (const link of guideLinks) {
-          const matchedChannel = guide.channels.find((c) => c.id === link.channelId) ||
-            guide.channels.find((c) => c.names.some((n) => scoreMatch(link.channelName || '', n) > 0.9));
+          // Same contract as mergeGuide: only an exact id match may add a
+          // channel node, because the M3U already carries this id as its
+          // tvg-id (see resolveGuideChannel).
+          const matchedChannel = resolveGuideChannel(guide, link.channelId, link.channelName);
           if (!matchedChannel) continue;
 
           const existingIdx = base.channel.findIndex((c) => c['@_id'] === matchedChannel.id);
@@ -832,26 +1519,416 @@ export async function runAutoRefresh(cache, hostedStore, apiKey, config) {
     }
 
     const mergedXml = buildXmlTv(base);
-    await publishFiles(hostedStore, config.slug, { m3uContent: m3u, xmlContent: mergedXml });
+
+    // expectProgrammes: guide-backed channels were matched this run, so a
+    // guide with no programmes — or one whose programmes have all already
+    // ended — is a failed run, not a successful logo-only publication. This
+    // is the check that stops a bad run from replacing the last valid guide
+    // (and is the exact production failure it was added for: a published
+    // guide that ages out still serves 200 and still looks fine everywhere
+    // except in the player).
+    const publication = await publishFiles(hostedStore, config.slug, {
+      m3uContent: m3u,
+      xmlContent: mergedXml,
+      expectProgrammes: guideCount > 0
+    });
 
     const updated = {
       ...config,
-      lastRunAt: Date.now(),
+      lastRunAt: runAt,
       lastRunStatus: 'ok',
       lastRunError: null,
+      lastRunErrorCode: null,
       lastRunChannelCount: channels.length,
       lastRunGuideCount: guideCount,
       lastRunLogoCount: logoCount,
       lastRunFailedCount: failedCount,
-      lastRunOverrideCount: overrideCount
+      lastRunOverrideCount: overrideCount,
+      lastRunProgramCount: publication.metrics.epgPrograms,
+      lastRunCurrentOrFutureCount: publication.metrics.epgCurrentOrFuturePrograms,
+      lastRunPublishWarnings: publication.warnings.map((w) => w.code),
+      lastRunPublishedVersion: publication.version
     };
-    await hostedStore.set(`refresh-config:${config.slug}`, updated);
+    await hostedStore.set(refreshConfigKey(config.slug), updated, { strict: true, ttlSeconds: null });
+    logEvent('epg.autoRefresh.completed', {
+      slugHash: slugHash(config.slug),
+      channelCount: channels.length,
+      guideCount,
+      logoCount,
+      failedCount,
+      programCount: publication.metrics.epgPrograms
+    });
     return updated;
   } catch (error) {
-    const updated = { ...config, lastRunAt: Date.now(), lastRunStatus: 'error', lastRunError: error.message };
-    await hostedStore.set(`refresh-config:${config.slug}`, updated);
+    const updated = {
+      ...config,
+      lastRunAt: runAt,
+      lastRunStatus: 'error',
+      lastRunError: error.message,
+      lastRunErrorCode: error.code || null
+    };
+    try {
+      await hostedStore.set(refreshConfigKey(config.slug), updated, { strict: true, ttlSeconds: null });
+    } catch (storeError) {
+      logEvent('epg.autoRefresh.statusWrite.failed', { slugHash: slugHash(config.slug), error: storeError.message }, 'error');
+    }
+    logEvent('epg.autoRefresh.failed', { slugHash: slugHash(config.slug), errorCode: error.code || null, error: error.message }, 'error');
     throw error;
   }
+}
+
+// ---- scheduled tick ---------------------------------------------------------
+//
+// One shared implementation of "run every config that is actually due", used
+// by Cloudflare's cron trigger and by the local Node scheduler in server.js.
+// Before this existed, only the Cloudflare Worker ever called runAutoRefresh
+// from a background job, so a self-hosted deployment silently never refreshed
+// anything — the config saved, the UI said it was saved, and nothing ran.
+
+/**
+ * Run every auto-refresh config that is due. Never throws for a single slug's
+ * failure: one bad lineup must not stop every other slug from refreshing.
+ * @param {Object} cache EPG source cache adapter
+ * @param {Object} hostedStore hosted-files store adapter
+ * @param {string} apiKey TMDB API key (may be '')
+ * @param {{now?: number, maxRuns?: number}} [options]
+ * @returns {Promise<{checked: number, due: number, ran: number, failed: number, results: Array}>}
+ */
+export async function runDueAutoRefreshes(cache, hostedStore, apiKey, options = {}) {
+  const now = options.now ?? Date.now();
+  const maxRuns = options.maxRuns ?? 25;
+  const configs = await listRefreshConfigs(hostedStore);
+  const results = [];
+  let due = 0;
+  let ran = 0;
+  let failed = 0;
+
+  for (const config of configs) {
+    if (ran >= maxRuns) {
+      results.push({ slug: config.slug, ran: false, reason: 'run-budget-exhausted' });
+      continue;
+    }
+    // A config with no intervalKey is stored but never due — reported as
+    // paused rather than skipped silently, so it shows up as a warning.
+    if (!isRefreshDue(config, now)) {
+      results.push({ slug: config.slug, ran: false, reason: config.intervalKey ? 'not-due' : 'paused' });
+      continue;
+    }
+    due += 1;
+    // `ran` counts attempts, `failed` the subset that errored: "ran 2, 1
+    // failed" is what a reader needs, not "ran 1" while two configs were due.
+    ran += 1;
+    try {
+      await runAutoRefresh(cache, hostedStore, apiKey, config, { now });
+      results.push({ slug: config.slug, ran: true, status: 'ok' });
+    } catch (error) {
+      failed += 1;
+      results.push({ slug: config.slug, ran: true, status: 'error', errorCode: error.code || null });
+    }
+  }
+
+  logEvent('epg.autoRefresh.tick', { checked: configs.length, due, ran, failed });
+  return { checked: configs.length, due, ran, failed, results };
+}
+
+// ---- freshness dashboard ----------------------------------------------------
+//
+// The outage this exists to prevent: a guide is published once, nothing ever
+// re-publishes it, and a few days later every programme in it has already
+// ended. The endpoints still return 200 and the guide is still perfectly
+// valid XMLTV — only the viewer sees anything wrong. So every published slug
+// is inspected for two independent things: how much schedule it has left, and
+// whether anything is scheduled to renew it.
+
+const FRESHNESS_WARNING_MESSAGES = {
+  GUIDE_EXPIRED: 'Every programme in this guide has already ended — players will show no EPG for any channel. Republish it now.',
+  GUIDE_ENDING_SOON: 'This guide\u2019s schedule runs out within 12 hours. Republish it, or enable auto-refresh, before then.',
+  GUIDE_NO_PROGRAMMES: 'This guide contains no programmes at all (channel/logo data only).',
+  GUIDE_MISSING: 'No guide is published for this slug — players will show a playlist with no EPG.',
+  NO_AUTO_REFRESH: 'Nothing is scheduled to renew this guide, so it will expire and every channel will lose its EPG once its last programme passes. Enable auto-refresh for this slug.',
+  AUTO_REFRESH_PAUSED: 'An auto-refresh config is saved for this slug but its interval is Off, so it will never run. Choose an interval to actually keep the guide fresh.',
+  AUTO_REFRESH_FAILING: 'The last auto-refresh run failed — the guide above is no longer being renewed. See the recorded error for which stage failed.',
+  AUTO_REFRESH_OVERDUE: 'Auto-refresh is enabled for this slug but has not run when it was due — the scheduler may not be running. On Cloudflare, check that the Cron Trigger exists (Settings \u2192 Trigger events, schedule 0 * * * *); locally, check IPTV4U_NO_SCHEDULER is not set.',
+  AUTO_REFRESH_NEVER_RAN: 'Auto-refresh is enabled for this slug but has never run. If this persists, the scheduler is not executing: on Cloudflare, confirm the Cron Trigger exists (Settings \u2192 Trigger events, schedule 0 * * * *).'
+};
+
+/**
+ * @param {string} code
+ * @param {Object} [extra]
+ */
+function freshnessWarning(code, extra = {}) {
+  return { code, message: FRESHNESS_WARNING_MESSAGES[code] || code, ...extra };
+}
+
+/**
+ * Health of every published slug, plus whether each is being kept fresh.
+ *
+ * Reads the live guide for each slug so the programme counts are true *now*
+ * rather than a publish-time snapshot (pass `{deep: false}` to answer from
+ * manifests alone, which is cheaper but can only judge freshness). Safe to
+ * store/log either way — every field is a count, a timestamp or a slug.
+ *
+ * @param {Object} store hosted-files store adapter
+ * @param {{now?: number, deep?: boolean}} [options]
+ * @returns {Promise<{status: string, checkedAt: string, count: number, slugs: Array, warnings: Array}>}
+ */
+export async function assessAllPublishedHealth(store, options = {}) {
+  const now = options.now ?? Date.now();
+  const entries = await store.list(MANIFEST_PREFIX);
+  const rows = [];
+
+  // Group by slug rather than only looking for a manifest: a slug published
+  // before manifests existed (or served from the legacy keys) is still a
+  // published slug, and leaving it out of the dashboard would hide exactly
+  // the guides most likely to have gone stale unnoticed.
+  const manifests = new Map();
+  const seen = new Set();
+  for (const entry of entries) {
+    const rest = entry.name.slice(MANIFEST_PREFIX.length);
+    const slug = rest.split(':')[0];
+    if (!slug) continue;
+    seen.add(slug);
+    if (entry.name.endsWith(MANIFEST_SUFFIX) && entry.data) manifests.set(slug, entry.data);
+  }
+
+  for (const slug of [...seen].sort()) {
+    rows.push(await buildPublishedRow(store, slug, manifests.get(slug) || null, now, options));
+  }
+
+  // A slug can have a refresh config and no publication at all (a config
+  // saved for a slug that was renamed, or a publication that never landed) —
+  // that is worth surfacing too, since the user believes it is running.
+  for (const config of await listRefreshConfigs(store)) {
+    if (seen.has(config.slug)) continue;
+    const schedule = describeRefreshSchedule(config, now);
+    rows.push({
+      slug: config.slug,
+      published: false,
+      status: 'missing',
+      publishedAt: null,
+      activeVersion: null,
+      guideAgeMs: null,
+      scheduleRemainingMs: null,
+      latestProgramStop: null,
+      expiry: { at: null, inMs: null, expired: false },
+      hasGuide: false,
+      guideChannels: null,
+      programmes: null,
+      currentOrFutureProgrammes: null,
+      freshness: 'unknown',
+      renewal: 'unpublished',
+      attentionRank: 0,
+      refresh: schedule,
+      warnings: [
+        freshnessWarning('NO_AUTO_REFRESH', {
+          message: 'An auto-refresh config is saved for this slug, but nothing has been published under it yet.'
+        })
+      ]
+    });
+  }
+
+  // Worst first, then by slug so the order is stable between calls.
+  rows.sort((a, b) => (a.attentionRank - b.attentionRank) || String(a.slug).localeCompare(String(b.slug)));
+  const warnings = rows.flatMap((row) => row.warnings.map((w) => ({ ...w, slug: row.slug })));
+
+  // Scheduler-level health: the one failure mode no individual slug can
+  // distinguish on its own. Every slug can look correctly "enabled" while the
+  // thing that executes them is not running at all.
+  const enabled = rows.filter((row) => row.refresh?.enabled);
+  const neverRun = enabled.filter((row) => !row.refresh.lastRunAt).map((row) => row.slug);
+  const overdue = rows.filter((row) => row.renewal === 'overdue').map((row) => row.slug);
+  // Enabled, past its grace period, and still never executed — the only
+  // evidence that the thing meant to run it is not running. A config saved
+  // moments ago is *expected* to have no lastRunAt yet, so it must not be
+  // counted here, or enabling auto-refresh would immediately cry wolf.
+  const neverRanAndOverdue = enabled
+    .filter((row) => row.renewal === 'overdue' && !row.refresh.lastRunAt)
+    .map((row) => row.slug);
+  const lastRunAt = enabled
+    .map((row) => row.refresh.lastRunAt)
+    .filter(Boolean)
+    .sort((a, b) => b - a)[0] || null;
+  const scheduler = {
+    enabledConfigs: enabled.length,
+    pausedConfigs: rows.filter((row) => row.refresh?.paused).length,
+    unconfigured: rows.filter((row) => row.refresh && !row.refresh.configured).length,
+    neverRun,
+    neverRanAndOverdue,
+    overdue,
+    lastRunAt,
+    // true = evidence it runs, false = evidence it doesn't, null = no enabled
+    // configs, or too soon to tell either way.
+    //
+    // A past lastRunAt is *not* sufficient for true: a manual "Refresh Now"
+    // leaves one behind, so a scheduler that stopped three days ago would still
+    // look alive. `overdue` is the reliable signal, because a run that is
+    // attempted — successfully or not — always advances lastRunAt.
+    observed: enabled.length === 0 || (!lastRunAt && neverRanAndOverdue.length === 0 && overdue.length === 0)
+      ? null
+      : neverRanAndOverdue.length > 0 || overdue.length > 0
+        ? false
+        : true
+  };
+  if (scheduler.observed === false) {
+    warnings.push({
+      code: 'SCHEDULER_NOT_OBSERVED',
+      slug: null,
+      message: `Auto-refresh is enabled but the scheduler is not running it (${(overdue.length ? overdue : neverRanAndOverdue).join(', ')}) — the guides will not be renewed. On Cloudflare, confirm the Cron Trigger exists (Settings \u2192 Trigger events, schedule 0 * * * *); locally, confirm IPTV4U_NO_SCHEDULER is not set.`
+    });
+  }
+
+  // Instance health is about what is *published*. A saved auto-refresh config
+  // with nothing published under it is worth flagging (degraded), but calling
+  // a whole instance "invalid" because of one leftover config misreports every
+  // guide on it — and "invalid" is reserved for content that is actually
+  // broken.
+  const publishedRows = rows.filter((row) => row.published);
+  let status = 'healthy';
+  if (publishedRows.some((row) => row.status === 'invalid')) status = 'invalid';
+  else if (publishedRows.some((row) => row.status === 'stale')) status = 'stale';
+  else if (rows.some((row) => row.status !== 'healthy')) status = 'degraded';
+
+  return {
+    status,
+    checkedAt: new Date(now).toISOString(),
+    count: rows.length,
+    // A guide can be expired, expiring or unrenewed at the same time; these
+    // three counts are what the dashboard banner summarises.
+    attention: {
+      expired: rows.filter((row) => row.freshness === 'expired').length,
+      expiringSoon: rows.filter((row) => row.freshness === 'ending-soon').length,
+      noRefresh: rows.filter((row) => row.refresh && !row.refresh.enabled).length,
+      overdue: rows.filter((row) => row.renewal === 'overdue').length
+    },
+    scheduler,
+    slugs: rows,
+    warnings
+  };
+}
+
+/**
+ * @param {Object} store
+ * @param {string} slug
+ * @param {Object|null} manifest
+ * @param {number} now
+ */
+async function buildPublishedRow(store, slug, manifest, now, options = {}) {
+  const config = await store.getStale(refreshConfigKey(slug));
+  const schedule = describeRefreshSchedule(config, now);
+
+  // The manifest's `epgCurrentOrFuturePrograms` is a snapshot taken at publish
+  // time, so it stays frozen at whatever it was then — it would still claim
+  // "96 current/upcoming" about a guide in which every programme has ended.
+  // The dashboard's whole purpose is not to lie about that, so the live guide
+  // is read (this is an on-demand report, the same cost as the single-slug
+  // health check) and the manifest is only the fallback when it cannot be.
+  let analysis = null;
+  let resolvedEpg = null;
+  if (options.deep !== false) {
+    try {
+      resolvedEpg = await resolveHostedFile(store, slug, 'epg');
+      if (resolvedEpg?.content) analysis = analyzeGuide(resolvedEpg.content, { now });
+    } catch {
+      // unreadable body — fall back to manifest-only freshness below
+    }
+  }
+
+  // No guide at all is reported as "unknown", not as "no-programmes":
+  // GUIDE_MISSING below says what is actually wrong, and this keeps the field
+  // identical to what the single-slug health view reports for the same store.
+  const hasGuide = !!analysis || !!manifest?.epgChannels;
+  const freshness = !hasGuide ? 'unknown' : analysis ? guideFreshness(analysis, now) : manifestFreshness(manifest, now);
+  const warnings = [];
+
+  if (freshness === 'expired') warnings.push(freshnessWarning('GUIDE_EXPIRED'));
+  else if (freshness === 'ending-soon') warnings.push(freshnessWarning('GUIDE_ENDING_SOON'));
+  else if (freshness === 'no-programmes') warnings.push(freshnessWarning('GUIDE_NO_PROGRAMMES'));
+
+  // A config that exists but is not being executed is a *different* failure
+  // from no config at all: "enabled" alone is not evidence that anything ran,
+  // so the two are reported separately rather than collapsed into one flag.
+  const overdue = isAutoRefreshOverdue(config, schedule, now);
+  if (schedule.paused) warnings.push(freshnessWarning('AUTO_REFRESH_PAUSED'));
+  else if (!schedule.enabled) warnings.push(freshnessWarning('NO_AUTO_REFRESH'));
+  else if (overdue) warnings.push(freshnessWarning('AUTO_REFRESH_OVERDUE', { neverRan: !schedule.lastRunAt }));
+  else if (schedule.lastRunStatus === 'error') {
+    warnings.push(freshnessWarning('AUTO_REFRESH_FAILING', {
+      errorCode: schedule.lastRunErrorCode,
+      error: schedule.lastRunError
+    }));
+  }
+
+  const renewal = schedule.paused ? 'paused' : !schedule.enabled ? 'will-expire' : overdue ? 'overdue' : 'auto';
+  // Manifest first; for a slug published before manifests, the stored write
+  // time, so "Guide age" is a real number rather than "unknown" on a
+  // deployment where every existing slug predates manifests.
+  const publishedAt = manifest?.publishedAt || resolvedEpg?.publishedAt || null;
+  const publishedAtMs = publishedAt ? Date.parse(publishedAt) : NaN;
+  const latestStop = analysis?.latestStop || manifest?.latestProgramStop || null;
+  const latestStopMs = latestStop ? Date.parse(latestStop) : NaN;
+  const invalid = !!analysis && !analysis.validXml;
+  if (invalid) warnings.unshift(...analysis.errors.map((e) => ({ code: e.code, message: e.message })));
+  // A playlist published with no guide at all is a degraded slug, not an
+  // invalid one — the same distinction the single-slug health view draws, so
+  // the two views can't disagree about the same slug. (Calling it invalid also
+  // used to happen purely because an unmeasurable freshness looked like a
+  // failed validation.)
+  if (!hasGuide) warnings.unshift(freshnessWarning('GUIDE_MISSING'));
+
+  return {
+    slug,
+    published: true,
+    status: healthStatus({
+      valid: !invalid,
+      freshness,
+      warnings: warnings.length,
+      matched: manifest?.identifierMatchCount ?? 0,
+      channels: analysis?.channelCount ?? manifest?.epgChannels ?? 0
+    }),
+    publishedAt,
+    publishedAtSource: manifest?.publishedAt ? 'manifest' : (resolvedEpg?.publishedAtSource || null),
+    activeVersion: manifest?.activeVersion || null,
+    lastKnownGoodAvailable: !!manifest?.previousVersion,
+    guideAgeMs: Number.isFinite(publishedAtMs) ? Math.max(0, now - publishedAtMs) : null,
+    latestProgramStop: latestStop,
+    scheduleRemainingMs: Number.isFinite(latestStopMs) ? latestStopMs - now : null,
+    // The countdown the dashboard sorts and labels by: positive = time left,
+    // negative = how long ago it ran out.
+    expiry: {
+      at: latestStop,
+      inMs: Number.isFinite(latestStopMs) ? latestStopMs - now : null,
+      expired: Number.isFinite(latestStopMs) && latestStopMs <= now
+    },
+    hasGuide,
+    guideChannels: analysis?.channelCount ?? manifest?.epgChannels ?? null,
+    programmes: analysis?.programmeCount ?? manifest?.epgPrograms ?? null,
+    currentOrFutureProgrammes: analysis ? analysis.currentOrFutureProgrammes : null,
+    freshness,
+    // 'auto' = something will renew it; 'will-expire' = nothing will;
+    // 'paused' = a config exists but can never be due; 'overdue' = the
+    // scheduler is not running what it was told to.
+    renewal,
+    attentionRank: rankAttention({ freshness, renewal }),
+    refresh: schedule,
+    warnings
+  };
+}
+
+/**
+ * How urgently a published slug needs attention, as a sort key: broken first,
+ * then about to break, then working-but-unrenewed, then healthy. Ordering the
+ * dashboard by this is what puts the slug that has already failed at the top
+ * instead of wherever its name happens to fall in the alphabet.
+ * @param {{freshness: string, renewal: string}} state
+ * @returns {number} 0 = worst
+ */
+export function rankAttention({ freshness, renewal }) {
+  if (freshness === 'expired' || freshness === 'unknown') return 0;
+  if (freshness === 'no-programmes') return 1;
+  if (freshness === 'ending-soon') return 1;
+  if (renewal === 'overdue') return 2;
+  if (renewal !== 'auto') return 3;
+  return 4;
 }
 
 export { slugify };

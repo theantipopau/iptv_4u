@@ -704,6 +704,208 @@ dialog::backdrop {
   margin-top: 0.6rem;
 }
 
+/* EPG health panel — status is always spelled out in text as well as
+   coloured, so it reads the same for anyone who can't distinguish the
+   colours (and in a screenshot). */
+.health-summary {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-accent-1);
+  font-size: 0.86rem;
+}
+
+.health-summary__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.health-summary__status {
+  font-weight: 600;
+}
+
+.health-summary__status--healthy { color: var(--success); }
+.health-summary__status--degraded,
+.health-summary__status--stale { color: #8a5a00; }
+.health-summary__status--invalid,
+.health-summary__status--missing { color: var(--danger); }
+
+.health-summary dl {
+  display: grid;
+  grid-template-columns: minmax(9.5rem, max-content) 1fr;
+  gap: 0.15rem 0.6rem;
+  margin: 0;
+}
+
+.health-summary dt {
+  color: var(--muted);
+}
+
+.health-summary dd {
+  margin: 0;
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.health-summary ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.health-summary li {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.health-advice {
+  border-left: 3px solid var(--accent-2);
+  padding-left: 0.6rem;
+}
+
+/* Post-publish checklist. Successes and the one warning that matters are the
+   same size and weight — a guide with no renewal schedule is not a footnote. */
+.publish-summary {
+  display: grid;
+  gap: 0.3rem;
+  margin-top: 0.7rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-accent-1);
+  font-size: 0.86rem;
+}
+
+.publish-summary__row {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.publish-summary__row--bad {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.publish-summary__row--warn {
+  color: #8a5a00;
+}
+
+.publish-summary .btn {
+  justify-self: start;
+  margin-top: 0.3rem;
+}
+
+/* Standing "needs attention" banner for already-published slugs. */
+.attention-banner {
+  margin-top: 0.7rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  font-size: 0.86rem;
+}
+
+.attention-banner ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.guides-table__expiry--expired {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.guides-table__expiry--urgent {
+  color: #8a5a00;
+  font-weight: 600;
+}
+
+.guides-table__scheduler {
+  margin: 0.6rem 0 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+}
+
+.guides-table__scheduler--missing {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* Published-guides freshness dashboard. Horizontally scrollable rather than
+   squeezed on narrow screens, so the status text stays readable. */
+.guides-table {
+  margin-top: 0.7rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-accent-1);
+  font-size: 0.84rem;
+  /* Scrolls its own content on a narrow screen rather than widening the
+     whole page (the app already has a wide channel table doing that). */
+  overflow-x: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.guides-table table {
+  width: 100%;
+  border-collapse: collapse;
+  /* Overrides the page-wide `table { min-width: 820px }`: that minimum is for
+     the channel table, and on this table it widened the whole page instead of
+     letting .guides-table scroll. */
+  min-width: 0;
+}
+
+.guides-table th,
+.guides-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.35rem 0.6rem 0.35rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.guides-table thead th {
+  color: var(--muted);
+  font-weight: 600;
+  /* Deliberately not nowrap: a header that can't wrap sets a wide minimum
+     table width, which on a narrow screen pushed the Status column (the whole
+     point of the table) off the edge. */
+}
+
+.guides-table td {
+  overflow-wrap: anywhere;
+}
+
+.guides-table tbody th {
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.guides-table__warnings {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.2rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .guides-table * {
+    transition: none;
+  }
+}
+
 .url-row {
   display: flex;
   gap: 0.5rem;

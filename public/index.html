@@ -133,9 +133,12 @@
             <input id="publishSlug" type="text" placeholder="matt" />
           </label>
           <button id="publishBtn" class="btn primary">Publish to Hosted URLs</button>
+          <button id="enableAutoRefreshBtn" class="btn" type="button">Enable Auto Refresh</button>
         </div>
         <p class="small publish-warning">⚠️ These URLs are public and unauthenticated — anyone with the link can access your playlist. If your stream URLs contain private tokens, treat the link like a password.</p>
+        <div id="attentionBanner" class="attention-banner" role="status" aria-live="polite" hidden></div>
         <div id="publishStatus" class="inline-status"></div>
+        <div id="publishSummary" class="publish-summary" role="status" aria-live="polite" hidden></div>
         <div id="publishResult" class="publish-result" hidden>
           <label>
             <span>Playlist URL</span>
@@ -156,8 +159,19 @@
 
         <div class="divider"></div>
 
+        <h3 class="sub-heading">EPG health</h3>
+        <p class="small">Checks what the server is actually serving right now: is the guide valid XMLTV, do the playlist's <code>tvg-id</code> values match the guide's channel ids, and does it still contain programmes that haven't already ended. Run this <em>before</em> touching TiViMate — a guide whose programmes have all finished still downloads fine and still shows nothing.</p>
+        <div class="controls-grid">
+          <button id="healthCheckBtn" class="btn" type="button">Test Published Files</button>
+          <button id="compareIdsBtn" class="btn" type="button">Compare Playlist IDs with Guide IDs</button>
+        </div>
+        <div id="healthSummary" class="health-summary" role="status" aria-live="polite" hidden></div>
+
+        <div class="divider"></div>
+
         <h3 class="sub-heading">Keep it fresh automatically</h3>
         <p class="small">Give it an M3U URL (instead of just a file upload) and it'll periodically re-fetch, re-match, and re-publish under the same slug on its own — no need to come back and re-upload.</p>
+        <p class="small">Worth enabling for any published guide: a schedule only covers a few days ahead, so a guide that's never re-published eventually contains nothing but programmes that have already ended, and every channel loses its EPG at once. The EPG health panel above reports exactly that.</p>
         <div class="controls-grid">
           <label>
             <span>M3U source URL</span>
@@ -166,11 +180,20 @@
           <label>
             <span>Refresh interval</span>
             <select id="autoRefreshInterval">
-              <option value="">Off</option>
               <option value="6h">Every 6 hours</option>
               <option value="12h">Every 12 hours</option>
-              <option value="24h">Daily</option>
+              <option value="24h" selected>Daily</option>
+              <option value="daily-at">Daily at a set time…</option>
+              <option value="">Off (guide will expire)</option>
             </select>
+          </label>
+          <label id="autoRefreshAtHourLabel" hidden>
+            <span>Refresh at (in the time zone below)</span>
+            <select id="autoRefreshAtHour"></select>
+          </label>
+          <label id="autoRefreshTimeZoneLabel" hidden>
+            <span>Time zone</span>
+            <select id="autoRefreshTimeZone"></select>
           </label>
         </div>
         <div class="controls-grid">
@@ -178,10 +201,21 @@
           <button id="refreshNowBtn" class="btn">Refresh Now</button>
           <div id="autoRefreshStatus" class="inline-status"></div>
         </div>
+
+        <div class="divider"></div>
+
+        <h3 class="sub-heading">Published guides &amp; freshness</h3>
+        <p class="small">Every slug you've published, how much schedule its guide has left, and whether anything is scheduled to renew it. A guide with no auto-refresh will expire once its last programme ends — this is where that shows up <em>before</em> your player goes blank.</p>
+        <div class="controls-grid">
+          <button id="allGuidesBtn" class="btn" type="button">Check All Published Guides</button>
+          <div id="allGuidesStatus" class="inline-status"></div>
+        </div>
+        <div id="guidesTable" class="guides-table" role="status" aria-live="polite" hidden></div>
       </section>
 
       <section class="card export-card">
         <h2><span class="step-num">6</span> Project</h2>
+
         <div class="controls-grid">
           <button id="saveProjectBtn" class="btn">Save Project File</button>
           <label>

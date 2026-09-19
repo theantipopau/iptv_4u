@@ -22,11 +22,15 @@ import {
   saveRefreshConfig,
   getRefreshConfig,
   runAutoRefresh,
-  isRefreshDue,
+  runDueAutoRefreshes,
   uploadLogoAsset,
-  getLogoAsset
+  getLogoAsset,
+  assessPublishedHealth,
+  assessAllPublishedHealth
 } from './shared/epg-service.js';
-import { createKvCache } from './shared/kv-cache.js';
+import { buildHostedResponse } from './shared/serve.js';
+import { createKvCache, createHostedKvStore } from './shared/kv-cache.js';
+import { logEvent } from './shared/log.js';
 
 async function readJson(request) {
   try {
@@ -41,7 +45,16 @@ function ok(result) {
 }
 
 function fail(error) {
-  return Response.json({ ok: false, error: error.message }, { status: error.status || 500 });
+  logEvent('api.request.failed', { errorCode: error.code || 'INTERNAL_ERROR', error: error.message }, 'error');
+  return Response.json(
+    { ok: false, error: error.message, code: error.code || 'INTERNAL_ERROR', details: error.details },
+    { status: error.status || 500 }
+  );
+}
+
+function fromHosted(result) {
+  const headers = new Headers(result.headers);
+  return new Response(result.body, { status: result.status, headers });
 }
 
 async function resolveTmdbApiKey(env) {
@@ -60,7 +73,11 @@ export default {
     const url = new URL(request.url);
     const { pathname } = url;
     const cache = createKvCache(env.EPG_CACHE);
-    const hostedStore = createKvCache(env.HOSTED_FILES);
+    // The hosted store must never expire its values: it holds published
+    // playlists/guides whose URLs players are permanently pointed at. Using
+    // the cache TTL here was a real bug — publications silently vanished from
+    // KV (and so 404'd) 30 days after they were written.
+    const hostedStore = createHostedKvStore(env.HOSTED_FILES);
 
     try {
       if (pathname === '/api/discover-sources' && request.method === 'GET') {
@@ -105,22 +122,32 @@ export default {
       if (pathname === '/api/refresh-now' && request.method === 'POST') {
         const body = await readJson(request);
         const config = await getRefreshConfig(hostedStore, body.slug);
-        if (!config) throw new Error('No auto-refresh config saved for this slug yet — save one first.');
+        if (!config) {
+          const error = new Error('No auto-refresh config saved for this slug yet — save one first.');
+          error.status = 404;
+          error.code = 'REFRESH_CONFIG_NOT_FOUND';
+          throw error;
+        }
         return ok({ config: await runAutoRefresh(cache, hostedStore, await resolveTmdbApiKey(env), config) });
       }
 
       const iptvMatch = pathname.match(/^\/iptv\/([^/]+)\.m3u$/i);
-      if (iptvMatch && request.method === 'GET') {
-        const content = await getHostedFile(hostedStore, iptvMatch[1], 'm3u');
-        if (!content) return new Response('Not found. Publish this playlist first.', { status: 404 });
-        return new Response(content, { headers: { 'Content-Type': 'audio/x-mpegurl' } });
+      if (iptvMatch && (request.method === 'GET' || request.method === 'HEAD')) {
+        return fromHosted(await buildHostedResponse(hostedStore, decodeURIComponent(iptvMatch[1]), 'playlist', { method: request.method }));
       }
 
       const epgMatch = pathname.match(/^\/epg\/([^/]+)\.xml$/i);
-      if (epgMatch && request.method === 'GET') {
-        const content = await getHostedFile(hostedStore, epgMatch[1], 'xml');
-        if (!content) return new Response('Not found. Publish this guide first.', { status: 404 });
-        return new Response(content, { headers: { 'Content-Type': 'application/xml' } });
+      if (epgMatch && (request.method === 'GET' || request.method === 'HEAD')) {
+        return fromHosted(await buildHostedResponse(hostedStore, decodeURIComponent(epgMatch[1]), 'epg', { method: request.method }));
+      }
+
+      if (pathname === '/api/health/epg' && request.method === 'GET') {
+        return ok(await assessAllPublishedHealth(hostedStore));
+      }
+
+      const healthMatch = pathname.match(/^\/api\/health\/epg\/([^/]+)$/);
+      if (healthMatch && request.method === 'GET') {
+        return ok(await assessPublishedHealth(hostedStore, decodeURIComponent(healthMatch[1])));
       }
 
       if (pathname === '/api/upload-logo' && request.method === 'POST') {
@@ -153,21 +180,24 @@ export default {
   // of a shared cron.
   async scheduled(event, env, ctx) {
     const cache = createKvCache(env.EPG_CACHE);
-    const hostedStore = createKvCache(env.HOSTED_FILES);
+    // createHostedKvStore (never expires), not createKvCache: the cron
+    // re-publishes the playlist/guide, and through the cache adapter those
+    // writes inherited a 30-day TTL — so even a working auto-refresh would
+    // have let the published files silently expire.
+    const hostedStore = createHostedKvStore(env.HOSTED_FILES);
 
     ctx.waitUntil((async () => {
-      const tmdbApiKey = await resolveTmdbApiKey(env);
-      const list = await env.HOSTED_FILES.list({ prefix: 'refresh-config:' });
-      for (const key of list.keys) {
-        try {
-          const raw = await env.HOSTED_FILES.get(key.name);
-          if (!raw) continue;
-          const config = JSON.parse(raw).data;
-          if (!isRefreshDue(config)) continue;
-          await runAutoRefresh(cache, hostedStore, tmdbApiKey, config);
-        } catch (error) {
-          console.error(`Auto-refresh failed for ${key.name}:`, error.message);
-        }
+      if (!env.HOSTED_FILES) {
+        logEvent('epg.autoRefresh.storage.missing', { errorCode: 'STORAGE_BINDING_MISSING' }, 'error');
+        return;
+      }
+      try {
+        const tmdbApiKey = await resolveTmdbApiKey(env);
+        // Shared with the local scheduler in server.js, so both runtimes
+        // discover due work and report failures the same way.
+        await runDueAutoRefreshes(cache, hostedStore, tmdbApiKey);
+      } catch (error) {
+        logEvent('epg.autoRefresh.failed', { errorCode: error.code || null, error: error.message }, 'error');
       }
     })());
   }

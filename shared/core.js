@@ -19,6 +19,19 @@ const builder = new XMLBuilder({
   suppressEmptyNode: true
 });
 
+/**
+ * Remove characters XML 1.0 forbids outright (everything below 0x20 except
+ * tab/newline/carriage-return). A raw control character anywhere in a
+ * provider-supplied name or title makes the whole document unparseable for a
+ * strict player, which fails exactly like a missing guide.
+ * @param {string} text
+ * @returns {string}
+ */
+export function stripInvalidXmlChars(text) {
+  // eslint-disable-next-line no-control-regex
+  return String(text || '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+}
+
 export function arrify(value) {
   if (!value) return [];
   return Array.isArray(value) ? value : [value];
@@ -160,7 +173,12 @@ export function parseXmlTv(xmlText) {
 }
 
 export function buildXmlTv(tv) {
-  return `<?xml version="1.0" encoding="UTF-8"?>\n${builder.build({ tv })}`;
+  // Strip characters XML 1.0 forbids outright before serialising: a single
+  // raw control character in a provider-supplied channel name or programme
+  // title makes the whole document unparseable for a strict player, which
+  // fails exactly like a missing guide. See shared/validate.js.
+  const body = stripInvalidXmlChars(builder.build({ tv }));
+  return `<?xml version="1.0" encoding="UTF-8"?>\n${body}`;
 }
 
 export function emptyXmlTvStub() {

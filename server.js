@@ -14,10 +14,15 @@ import {
   saveRefreshConfig,
   getRefreshConfig,
   runAutoRefresh,
+  runDueAutoRefreshes,
   uploadLogoAsset,
-  getLogoAsset
+  getLogoAsset,
+  assessPublishedHealth,
+  assessAllPublishedHealth
 } from './shared/epg-service.js';
+import { buildHostedResponse } from './shared/serve.js';
 import { createNodeCache } from './shared/node-cache.js';
+import { logEvent } from './shared/log.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -45,12 +50,20 @@ loadDotEnv();
 const TMDB_API_KEY = process.env.TMDB_API_KEY || '';
 const PORT = process.env.PORT || 3000;
 
-const cache = createNodeCache(path.join(__dirname, '.epg-cache'));
-const hostedStore = createNodeCache(path.join(__dirname, '.hosted-files'));
+// Storage locations are overridable so a deployment (or the integration
+// tests) can point them somewhere else without editing this file; the
+// defaults stay exactly where they've always been.
+const cache = createNodeCache(process.env.IPTV4U_CACHE_DIR || path.join(__dirname, '.epg-cache'));
+const hostedStore = createNodeCache(process.env.IPTV4U_HOSTED_DIR || path.join(__dirname, '.hosted-files'));
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use((req, res, next) => {
+  // Same baseline header the Worker sends on every response.
+  res.set('X-Content-Type-Options', 'nosniff');
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 function handle(fn) {
@@ -59,7 +72,14 @@ function handle(fn) {
       const result = await fn(req);
       res.json({ ok: true, ...result });
     } catch (error) {
-      res.status(error.status || 500).json({ ok: false, error: error.message });
+      // Stage-specific diagnostics, never a bare 500 with an opaque message:
+      // the UI (and anyone reading a log) needs to know which stage failed.
+      res.status(error.status || 500).json({
+        ok: false,
+        error: error.message,
+        code: error.code || 'INTERNAL_ERROR',
+        details: error.details || undefined
+      });
     }
   };
 }
@@ -81,17 +101,33 @@ app.post('/api/export-m3u', handle(async (req) => exportM3u(req.body)));
 
 app.post('/api/publish', handle(async (req) => publishFiles(hostedStore, req.body.slug, req.body)));
 
-app.get('/iptv/:slug.m3u', async (req, res) => {
-  const content = await getHostedFile(hostedStore, req.params.slug, 'm3u');
-  if (!content) return res.status(404).type('text/plain').send('Not found. Publish this playlist first.');
-  res.type('audio/x-mpegurl').send(content);
-});
+// Published files are served through the same shared layer the Cloudflare
+// Worker uses (shared/serve.js): identical status codes, content types,
+// cache headers and last-known-good fallback on both platforms.
+function sendHosted(kind) {
+  return async (req, res) => {
+    const response = await buildHostedResponse(hostedStore, String(req.params.slug || ''), kind, {
+      method: req.method
+    });
+    res.status(response.status);
+    for (const [name, value] of Object.entries(response.headers)) res.set(name, value);
+    if (response.body === null) return res.end();
+    res.send(response.body);
+  };
+}
 
-app.get('/epg/:slug.xml', async (req, res) => {
-  const content = await getHostedFile(hostedStore, req.params.slug, 'xml');
-  if (!content) return res.status(404).type('text/plain').send('Not found. Publish this guide first.');
-  res.type('application/xml').send(content);
-});
+app.get('/iptv/:slug.m3u', sendHosted('playlist'));
+app.head('/iptv/:slug.m3u', sendHosted('playlist'));
+
+app.get('/epg/:slug.xml', sendHosted('epg'));
+app.head('/epg/:slug.xml', sendHosted('epg'));
+
+// Diagnostic endpoint: everything the UI (or a human with curl) needs to tell
+// whether a published pair is healthy, without exposing stream URLs or
+// credentials. Same shape on Express and Cloudflare.
+app.get('/api/health/epg', handle(async () => assessAllPublishedHealth(hostedStore)));
+
+app.get('/api/health/epg/:slug', handle(async (req) => assessPublishedHealth(hostedStore, req.params.slug)));
 
 app.post('/api/upload-logo', handle(async (req) => uploadLogoAsset(hostedStore, req.body)));
 
@@ -108,13 +144,61 @@ app.get('/api/refresh-config/:slug', handle(async (req) => ({ config: await getR
 
 app.post('/api/refresh-now', handle(async (req) => {
   const config = await getRefreshConfig(hostedStore, req.body.slug);
-  if (!config) throw new Error('No auto-refresh config saved for this slug yet — save one first.');
+  if (!config) {
+    const error = new Error('No auto-refresh config saved for this slug yet — save one first.');
+    error.status = 404;
+    error.code = 'REFRESH_CONFIG_NOT_FOUND';
+    throw error;
+  }
   return { config: await runAutoRefresh(cache, hostedStore, TMDB_API_KEY, config) };
 }));
 
-app.listen(PORT, () => {
-  console.log(`IPTV 4U running on http://localhost:${PORT}`);
-  if (!TMDB_API_KEY) {
-    console.log('TMDB_API_KEY not set — 24/7 channel art lookup will be skipped (see .env.example).');
+// ---- local auto-refresh scheduler ------------------------------------------
+//
+// Cloudflare's cron trigger drives auto-refresh in production, but nothing
+// drove it locally: a saved config on a self-hosted/Express deployment was
+// never executed by anything, so its guide silently aged out exactly like a
+// slug with no config at all. Same tick, same due-check, same code path as
+// the Worker — only the timer is different.
+
+const AUTO_REFRESH_TICK_MS = Number(process.env.IPTV4U_REFRESH_TICK_MS || 60 * 60 * 1000);
+
+/**
+ * Start the periodic auto-refresh tick. Overlapping ticks are skipped rather
+ * than queued, so a slow lineup can't pile up concurrent runs against the
+ * same store. Returns a stop function.
+ * @returns {() => void}
+ */
+export function startAutoRefreshScheduler() {
+  let running = false;
+  const tick = async () => {
+    if (running) return;
+    running = true;
+    try {
+      await runDueAutoRefreshes(cache, hostedStore, TMDB_API_KEY);
+    } catch (error) {
+      logEvent('epg.autoRefresh.tick.failed', { errorCode: error.code || null, error: error.message }, 'error');
+    } finally {
+      running = false;
+    }
+  };
+  const timer = setInterval(tick, AUTO_REFRESH_TICK_MS);
+  // Never hold the process open just to wait for a tick.
+  if (typeof timer.unref === 'function') timer.unref();
+  return () => clearInterval(timer);
+}
+
+export { app };
+
+if (!process.env.IPTV4U_NO_LISTEN) {
+  app.listen(PORT, () => {
+    console.log(`IPTV 4U running on http://localhost:${PORT}`);
+    if (!TMDB_API_KEY) {
+      console.log('TMDB_API_KEY not set — 24/7 channel art lookup will be skipped (see .env.example).');
+    }
+  });
+  if (process.env.IPTV4U_NO_SCHEDULER !== '1') {
+    startAutoRefreshScheduler();
+    console.log(`Auto-refresh scheduler running (checking every ${Math.round(AUTO_REFRESH_TICK_MS / 60000)} minutes; set IPTV4U_NO_SCHEDULER=1 to disable).`);
   }
-});
+}
