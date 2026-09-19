@@ -4,7 +4,7 @@
 // there always goes straight to the network with no caching involved,
 // regardless of what the ALLOW list below might otherwise suggest.
 
-const CACHE_VERSION = 'iptv4u-shell-v2';
+const CACHE_VERSION = 'iptv4u-shell-v3';
 
 const SHELL_ASSETS = [
   '/',
@@ -12,6 +12,7 @@ const SHELL_ASSETS = [
   '/styles.css',
   '/watch.css',
   '/app.js',
+  '/ui.js',
   '/watch.js',
   '/watch-core.js',
   '/manifest.webmanifest',

@@ -6,7 +6,7 @@
     <title>IPTV 4U EPG Linker</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
     <link rel="icon" type="image/png" href="/assets/logo.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
@@ -15,26 +15,36 @@
   <body>
     <header class="app-bar">
       <div class="app-bar-inner">
-        <div class="hero-left">
-          <img class="hero-logo" src="/assets/logo.png" alt="IPTV 4U logo" width="40" height="40" />
-          <div>
-            <p class="eyebrow">IPTV 4U</p>
-            <h1>M3U + XMLTV EPG Linker</h1>
+        <a class="hero-left" href="/" aria-label="IPTV 4U home">
+          <img class="hero-logo" src="/assets/logo.png" alt="" width="36" height="36" />
+          <div class="brand">
+            <span class="eyebrow">IPTV 4U</span>
+            <span class="brand-title">EPG Linker</span>
           </div>
+        </a>
+
+        <nav id="stepNav" class="step-nav" aria-label="Steps">
+          <a href="#sec-load" data-step="sec-load"><b>1</b>Load</a>
+          <a href="#sec-sources" data-step="sec-sources"><b>2</b>Sources</a>
+          <a href="#sec-link" data-step="sec-link"><b>3</b>Link</a>
+          <a href="#sec-export" data-step="sec-export"><b>4</b>Export</a>
+          <a href="#sec-publish" data-step="sec-publish"><b>5</b>Publish</a>
+        </nav>
+
+        <div class="app-bar-end">
+          <div id="statsBar" class="stats-bar" hidden>
+            <span class="stat-pill" id="statTotal" title="Total channels">0 channels</span>
+            <span class="stat-pill stat-pill--guide" id="statGuide" title="Full guide merge">0 guide</span>
+            <span class="stat-pill stat-pill--logo" id="statLogo" title="Logo only">0 logo</span>
+            <span class="stat-pill stat-pill--none" id="statNone" title="Not linked">0 unlinked</span>
+          </div>
+          <a class="btn btn--icon watch-link" href="/watch" title="Open the live viewer" aria-label="Open the live viewer">▶ <span>Watch</span></a>
+          <button id="themeToggle" class="theme-toggle" type="button" title="Toggle dark mode" aria-label="Toggle dark mode">🌓</button>
         </div>
-        <div id="statsBar" class="stats-bar" hidden>
-          <span class="stat-pill" id="statTotal" title="Total channels">0 channels</span>
-          <span class="stat-pill stat-pill--guide" id="statGuide" title="Full guide merge">0 guide</span>
-          <span class="stat-pill stat-pill--logo" id="statLogo" title="Logo only">0 logo</span>
-          <span class="stat-pill stat-pill--none" id="statNone" title="Not linked">0 unlinked</span>
-        </div>
-        <button id="themeToggle" class="theme-toggle" type="button" title="Toggle dark mode" aria-label="Toggle dark mode">🌓</button>
       </div>
     </header>
 
     <main class="app-shell">
-      <p class="subtitle">Load a playlist, auto-find online EPG + logo matches, detect 24/7 channels, merge selected guide data, and export or publish updated outputs.</p>
-
       <div id="resumeBanner" class="banner" hidden>
         <span>A previous session was found in this browser.</span>
         <div class="banner-actions">
@@ -43,59 +53,86 @@
         </div>
       </div>
 
-      <section class="card upload-card">
-        <h2><span class="step-num">1</span> Load Files</h2>
-        <div class="upload-grid">
-          <label>
-            <span>M3U Playlist (required)</span>
-            <input id="m3uFile" type="file" accept=".m3u,.txt" />
-          </label>
-          <label>
-            <span>XMLTV File (optional)</span>
-            <input id="xmlFile" type="file" accept=".xml,.xmltv" />
-          </label>
-          <button id="loadFilesBtn" class="btn primary">Parse Files</button>
-        </div>
-        <p class="small">No XMLTV file yet? Leave it blank — Parse Files will start a fresh guide you can build up from matches.</p>
-        <div id="summary" class="summary"></div>
-      </section>
+      <div id="attentionBanner" class="attention-banner" role="status" aria-live="polite" hidden></div>
 
-      <section class="card controls-card">
-        <h2><span class="step-num">2</span> Discover Online EPG Sources</h2>
-        <div class="controls-grid">
-          <button id="discoverBtn" class="btn">Discover IPTV-org Worker Sources</button>
-          <label>
-            <span>Max source scan per search</span>
-            <input id="maxSources" type="number" min="10" max="40" value="40" />
-          </label>
+      <div class="grid-2">
+        <section id="sec-load" class="card">
+          <div class="card-head">
+            <span class="step-num">1</span>
+            <div>
+              <h2>Load files</h2>
+              <p class="card-sub">Your playlist, and optionally an existing guide.</p>
+            </div>
+          </div>
+          <div class="upload-grid">
+            <label>
+              <span>M3U playlist <em class="req">required</em></span>
+              <input id="m3uFile" type="file" accept=".m3u,.txt" />
+            </label>
+            <label>
+              <span>XMLTV guide <em class="opt">optional</em></span>
+              <input id="xmlFile" type="file" accept=".xml,.xmltv" />
+            </label>
+          </div>
+          <div class="card-actions">
+            <button id="loadFilesBtn" class="btn primary">Parse files</button>
+            <span class="hint">No guide yet? Leave it blank and one is built from your matches.</span>
+          </div>
+          <div id="summary" class="summary"></div>
+        </section>
+
+        <section id="sec-sources" class="card">
+          <div class="card-head">
+            <span class="step-num">2</span>
+            <div>
+              <h2>Guide sources</h2>
+              <p class="card-sub">Where matches are searched. Public sources are found for you.</p>
+            </div>
+          </div>
+          <div class="controls-grid">
+            <button id="discoverBtn" class="btn">Discover IPTV-org sources</button>
+            <label class="inline-field">
+              <span>Max scan</span>
+              <input id="maxSources" type="number" min="10" max="40" value="40" />
+            </label>
+          </div>
           <div class="inline-status" id="sourceStatus">Not discovered yet</div>
-        </div>
-        <p id="tmdbStatus" class="small"></p>
-        <label>
-          <span>Your own EPG/guide URL(s) (optional)</span>
-          <textarea id="customGuideUrl" rows="2" placeholder="https://epg.example.com/your-guide.xml&#10;https://another-guide.example.com/nz.xml"></textarea>
-        </label>
-        <p class="small">If your IPTV provider gives you an XMLTV guide URL, paste it here — it's always included in matching alongside the public sources, and since it's built for your exact channel lineup it usually matches far better than the public ones. One per line to combine more than one (e.g. a general guide plus a region-specific one).</p>
-      </section>
+          <p id="tmdbStatus" class="hint"></p>
+          <label>
+            <span>Your own guide URL(s) <em class="opt">optional</em></span>
+            <textarea id="customGuideUrl" rows="2" placeholder="https://epg.example.com/your-guide.xml&#10;https://another-guide.example.com/nz.xml"></textarea>
+          </label>
+          <details class="help">
+            <summary>Why add my own guide?</summary>
+            <p>If your IPTV provider gives you an XMLTV guide URL, it's always included in matching alongside the public sources. It's built for your exact channel lineup, so it usually matches far better. Put one URL per line to combine several.</p>
+          </details>
+        </section>
+      </div>
 
-      <section class="card table-card">
-        <h2><span class="step-num">3</span> Link Channels</h2>
-        <div class="toolbar">
-          <button id="autoMatchBtn" class="btn primary">Auto-Match All Channels</button>
-          <span id="matchProgress" class="inline-status"></span>
+      <section id="sec-link" class="card table-card">
+        <div class="card-head">
+          <span class="step-num">3</span>
+          <div>
+            <h2>Link channels</h2>
+            <p class="card-sub">Match every channel to a guide and logo, then fix any that are wrong.</p>
+          </div>
+          <div class="card-head-end">
+            <span id="matchProgress" class="inline-status"></span>
+            <button id="autoMatchBtn" class="btn primary">Auto-match all</button>
+          </div>
         </div>
         <div class="progress-track" id="progressTrack" hidden>
           <div class="progress-fill" id="progressFill"></div>
         </div>
         <div class="table-toolbar">
-          <input id="channelFilter" type="search" placeholder="Filter channels by name, group, or link status…" />
+          <input id="channelFilter" type="search" placeholder="Filter by name, group, or status…" />
           <span id="tableCount" class="table-count"></span>
         </div>
         <div id="bulkToolbar" class="bulk-toolbar" hidden>
           <span id="bulkCount" class="small"></span>
-          <button id="bulkMatchBtn" class="btn">Re-match Selected</button>
-          <button id="bulkClearBtn" class="btn">Clear Links</button>
-          <button id="bulkDeselectBtn" class="btn">Deselect All</button>
+          <button id="bulkMatchBtn" class="btn">Re-match selected</button>
+          <button id="bulkClearBtn" class="btn">Clear links</button>
+          <button id="bulkDeselectBtn" class="btn">Deselect all</button>
         </div>
         <div class="table-wrap">
           <table id="channelsTable">
@@ -103,8 +140,8 @@
               <tr>
                 <th class="col-check"><input type="checkbox" id="selectAllCheckbox" title="Select all visible" /></th>
                 <th>Logo</th>
-                <th data-sort="name" class="sortable">M3U Channel</th>
-                <th data-sort="tvgid" class="sortable">Current `tvg-id`</th>
+                <th data-sort="name" class="sortable">M3U channel</th>
+                <th data-sort="tvgid" class="sortable">Current tvg-id</th>
                 <th data-sort="status" class="sortable">Linked EPG</th>
                 <th data-sort="score" class="sortable">Score</th>
                 <th>Actions</th>
@@ -115,122 +152,142 @@
         </div>
       </section>
 
-      <section class="card export-card">
-        <h2><span class="step-num">4</span> Export</h2>
-        <div class="controls-grid">
-          <button id="exportM3UBtn" class="btn">Download Updated M3U</button>
-          <button id="exportXMLBtn" class="btn primary">Download Updated XMLTV</button>
+      <div class="grid-2">
+        <section id="sec-export" class="card">
+          <div class="card-head">
+            <span class="step-num">4</span>
+            <div>
+              <h2>Export</h2>
+              <p class="card-sub">Download the linked files to use anywhere.</p>
+            </div>
+          </div>
+          <div class="controls-grid">
+            <button id="exportM3UBtn" class="btn">Download M3U</button>
+            <button id="exportXMLBtn" class="btn primary">Download XMLTV</button>
+          </div>
           <div id="mergeStatus" class="inline-status"></div>
-        </div>
-      </section>
+        </section>
 
-      <section class="card export-card">
-        <h2><span class="step-num">5</span> Publish (Hosted URLs)</h2>
-        <p class="small">Publish a stable URL that IPTV player apps (TiViMate, etc.) can point at directly, instead of re-uploading a file every time.</p>
-        <div class="controls-grid">
-          <label>
-            <span>URL slug</span>
-            <input id="publishSlug" type="text" placeholder="matt" />
-          </label>
-          <button id="publishBtn" class="btn primary">Publish to Hosted URLs</button>
-          <button id="enableAutoRefreshBtn" class="btn" type="button">Enable Auto Refresh</button>
-        </div>
-        <p class="small publish-warning">⚠️ These URLs are public and unauthenticated — anyone with the link can access your playlist. If your stream URLs contain private tokens, treat the link like a password.</p>
-        <div id="attentionBanner" class="attention-banner" role="status" aria-live="polite" hidden></div>
-        <div id="publishStatus" class="inline-status"></div>
-        <div id="publishSummary" class="publish-summary" role="status" aria-live="polite" hidden></div>
-        <div id="publishResult" class="publish-result" hidden>
-          <label>
-            <span>Playlist URL</span>
-            <div class="url-row">
-              <input id="publishM3uUrl" type="text" readonly />
-              <button id="copyM3uUrlBtn" class="btn" type="button">Copy</button>
+        <section id="sec-project" class="card">
+          <div class="card-head">
+            <span class="step-num step-num--plain">↺</span>
+            <div>
+              <h2>Project</h2>
+              <p class="card-sub">Progress also autosaves in this browser.</p>
             </div>
-          </label>
-          <label>
-            <span>EPG URL</span>
-            <div class="url-row">
-              <input id="publishXmlUrl" type="text" readonly />
-              <button id="copyXmlUrlBtn" class="btn" type="button">Copy</button>
-            </div>
-          </label>
-          <a id="watchLiveLink" class="btn primary" href="#" target="_blank" rel="noopener">Watch Live in Browser</a>
+          </div>
+          <div class="controls-grid">
+            <button id="saveProjectBtn" class="btn">Save project file</button>
+            <label class="file-btn">
+              <span class="btn">Load project file</span>
+              <input id="loadProjectFile" type="file" accept=".json" />
+            </label>
+            <button id="exportBacklogBtn" class="btn">Export backlog (XMLTV)</button>
+          </div>
+          <details class="help">
+            <summary>What's the channel backlog?</summary>
+            <p>Every channel you've manually fixed (click a tvg-id or logo to edit) can be exported as a small XMLTV file. Commit it to your own repo and add its raw URL to "Your own guide URL(s)" so future imports resolve those channels automatically.</p>
+          </details>
+        </section>
+      </div>
+
+      <section id="sec-publish" class="card publish-card">
+        <div class="card-head">
+          <span class="step-num">5</span>
+          <div>
+            <h2>Publish</h2>
+            <p class="card-sub">A stable URL for TiViMate and other players, so you never re-upload.</p>
+          </div>
         </div>
 
-        <div class="divider"></div>
-
-        <h3 class="sub-heading">EPG health</h3>
-        <p class="small">Checks what the server is actually serving right now: is the guide valid XMLTV, do the playlist's <code>tvg-id</code> values match the guide's channel ids, and does it still contain programmes that haven't already ended. Run this <em>before</em> touching TiViMate — a guide whose programmes have all finished still downloads fine and still shows nothing.</p>
-        <div class="controls-grid">
-          <button id="healthCheckBtn" class="btn" type="button">Test Published Files</button>
-          <button id="compareIdsBtn" class="btn" type="button">Compare Playlist IDs with Guide IDs</button>
-        </div>
-        <div id="healthSummary" class="health-summary" role="status" aria-live="polite" hidden></div>
-
-        <div class="divider"></div>
-
-        <h3 class="sub-heading">Keep it fresh automatically</h3>
-        <p class="small">Give it an M3U URL (instead of just a file upload) and it'll periodically re-fetch, re-match, and re-publish under the same slug on its own — no need to come back and re-upload.</p>
-        <p class="small">Worth enabling for any published guide: a schedule only covers a few days ahead, so a guide that's never re-published eventually contains nothing but programmes that have already ended, and every channel loses its EPG at once. The EPG health panel above reports exactly that.</p>
-        <div class="controls-grid">
-          <label>
-            <span>M3U source URL</span>
-            <input id="autoRefreshM3uUrl" type="text" placeholder="https://provider.example.com/playlist.m3u" />
-          </label>
-          <label>
-            <span>Refresh interval</span>
-            <select id="autoRefreshInterval">
-              <option value="6h">Every 6 hours</option>
-              <option value="12h">Every 12 hours</option>
-              <option value="24h" selected>Daily</option>
-              <option value="daily-at">Daily at a set time…</option>
-              <option value="">Off (guide will expire)</option>
-            </select>
-          </label>
-          <label id="autoRefreshAtHourLabel" hidden>
-            <span>Refresh at (in the time zone below)</span>
-            <select id="autoRefreshAtHour"></select>
-          </label>
-          <label id="autoRefreshTimeZoneLabel" hidden>
-            <span>Time zone</span>
-            <select id="autoRefreshTimeZone"></select>
-          </label>
-        </div>
-        <div class="controls-grid">
-          <button id="saveAutoRefreshBtn" class="btn">Save Auto-Refresh Config</button>
-          <button id="refreshNowBtn" class="btn">Refresh Now</button>
-          <div id="autoRefreshStatus" class="inline-status"></div>
+        <div class="tabs" role="tablist" aria-label="Publish sections">
+          <button class="tab" role="tab" type="button" data-tab="publish" id="tab-publish" aria-controls="panel-publish" aria-selected="true">Publish</button>
+          <button class="tab" role="tab" type="button" data-tab="refresh" id="tab-refresh" aria-controls="panel-refresh" aria-selected="false" tabindex="-1">Auto-refresh</button>
+          <button class="tab" role="tab" type="button" data-tab="health" id="tab-health" aria-controls="panel-health" aria-selected="false" tabindex="-1">Health &amp; guides</button>
         </div>
 
-        <div class="divider"></div>
-
-        <h3 class="sub-heading">Published guides &amp; freshness</h3>
-        <p class="small">Every slug you've published, how much schedule its guide has left, and whether anything is scheduled to renew it. A guide with no auto-refresh will expire once its last programme ends — this is where that shows up <em>before</em> your player goes blank.</p>
-        <div class="controls-grid">
-          <button id="allGuidesBtn" class="btn" type="button">Check All Published Guides</button>
-          <div id="allGuidesStatus" class="inline-status"></div>
+        <div id="panel-publish" class="tab-panel" role="tabpanel" aria-labelledby="tab-publish">
+          <div class="controls-grid">
+            <label>
+              <span>URL slug</span>
+              <input id="publishSlug" type="text" placeholder="matt" autocomplete="off" />
+            </label>
+            <button id="publishBtn" class="btn primary">Publish</button>
+            <button id="enableAutoRefreshBtn" class="btn" type="button">Enable auto-refresh</button>
+          </div>
+          <p class="notice notice--warn">Published URLs are public and unauthenticated. If your stream URLs contain private tokens, treat the link like a password.</p>
+          <div id="publishStatus" class="inline-status"></div>
+          <div id="publishSummary" class="publish-summary" role="status" aria-live="polite" hidden></div>
+          <div id="publishResult" class="publish-result" hidden>
+            <label>
+              <span>Playlist URL</span>
+              <div class="url-row">
+                <input id="publishM3uUrl" type="text" readonly />
+                <button id="copyM3uUrlBtn" class="btn" type="button">Copy</button>
+              </div>
+            </label>
+            <label>
+              <span>EPG URL</span>
+              <div class="url-row">
+                <input id="publishXmlUrl" type="text" readonly />
+                <button id="copyXmlUrlBtn" class="btn" type="button">Copy</button>
+              </div>
+            </label>
+            <a id="watchLiveLink" class="btn primary" href="#" target="_blank" rel="noopener">▶ Watch live in browser</a>
+          </div>
         </div>
-        <div id="guidesTable" class="guides-table" role="status" aria-live="polite" hidden></div>
-      </section>
 
-      <section class="card export-card">
-        <h2><span class="step-num">6</span> Project</h2>
-
-        <div class="controls-grid">
-          <button id="saveProjectBtn" class="btn">Save Project File</button>
-          <label>
-            <span>Load Project File</span>
-            <input id="loadProjectFile" type="file" accept=".json" />
-          </label>
+        <div id="panel-refresh" class="tab-panel" role="tabpanel" aria-labelledby="tab-refresh" hidden>
+          <p class="hint">Re-fetches your playlist, re-matches, and re-publishes under the same slug on its own. A guide only covers a few days, so any published guide that isn't renewed will eventually show nothing.</p>
+          <div class="controls-grid">
+            <label class="grow">
+              <span>M3U source URL</span>
+              <input id="autoRefreshM3uUrl" type="text" placeholder="https://provider.example.com/playlist.m3u" />
+            </label>
+            <label>
+              <span>Refresh</span>
+              <select id="autoRefreshInterval">
+                <option value="6h">Every 6 hours</option>
+                <option value="12h">Every 12 hours</option>
+                <option value="24h" selected>Daily</option>
+                <option value="daily-at">Daily at a set time…</option>
+                <option value="">Off (guide will expire)</option>
+              </select>
+            </label>
+            <label id="autoRefreshAtHourLabel" hidden>
+              <span>At (in the time zone)</span>
+              <select id="autoRefreshAtHour"></select>
+            </label>
+            <label id="autoRefreshTimeZoneLabel" hidden>
+              <span>Time zone</span>
+              <select id="autoRefreshTimeZone"></select>
+            </label>
+          </div>
+          <div class="card-actions">
+            <button id="saveAutoRefreshBtn" class="btn primary">Save auto-refresh</button>
+            <button id="refreshNowBtn" class="btn">Refresh now</button>
+            <div id="autoRefreshStatus" class="inline-status"></div>
+          </div>
         </div>
-        <p class="small">Progress also autosaves to this browser automatically.</p>
 
-        <div class="divider"></div>
+        <div id="panel-health" class="tab-panel" role="tabpanel" aria-labelledby="tab-health" hidden>
+          <h3 class="sub-heading">This slug</h3>
+          <p class="hint">Checks what the server is serving right now: valid XMLTV, matching ids, and programmes that haven't ended. Run this before touching TiViMate.</p>
+          <div class="controls-grid">
+            <button id="healthCheckBtn" class="btn" type="button">Test published files</button>
+            <button id="compareIdsBtn" class="btn" type="button">Compare playlist and guide IDs</button>
+          </div>
+          <div id="healthSummary" class="health-summary" role="status" aria-live="polite" hidden></div>
 
-        <h3 class="sub-heading">Channel backlog</h3>
-        <p class="small">Every channel you've manually fixed (click-to-edit a tvg-id or logo) can be exported as a small XMLTV file — commit it to your own repo and add its raw URL to the "Your own EPG/guide URL(s)" field so future re-imports resolve it automatically, instead of depending entirely on what the public catalogs happen to track.</p>
-        <div class="controls-grid">
-          <button id="exportBacklogBtn" class="btn">Export Channel Backlog (XMLTV)</button>
+          <div class="divider"></div>
+
+          <h3 class="sub-heading">Every published guide</h3>
+          <p class="hint">How much schedule each guide has left, and whether anything renews it.</p>
+          <div class="controls-grid">
+            <button id="allGuidesBtn" class="btn" type="button">Check all published guides</button>
+            <div id="allGuidesStatus" class="inline-status"></div>
+          </div>
+          <div id="guidesTable" class="guides-table" role="status" aria-live="polite" hidden></div>
         </div>
       </section>
     </main>
@@ -245,7 +302,7 @@
 
     <dialog id="matchDialog">
       <form method="dialog" class="dialog-content">
-        <h3>Choose EPG Match</h3>
+        <h3>Choose EPG match</h3>
         <p id="dialogChannelName"></p>
         <p id="dialogContext" class="small"></p>
         <div id="matchList" class="match-list"></div>
@@ -258,5 +315,6 @@
     <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
     <script src="/app.js" defer></script>
+    <script src="/ui.js" defer></script>
   </body>
 </html>

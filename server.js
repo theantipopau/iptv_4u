@@ -64,7 +64,8 @@ app.use((req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   next();
 });
-app.use(express.static(path.join(__dirname, 'public')));
+// extensions: '/watch' -> watch.html, matching Cloudflare's static-asset handling.
+app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
 function handle(fn) {
   return async (req, res) => {

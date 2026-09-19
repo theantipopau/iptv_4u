@@ -17,7 +17,7 @@ Point it at an `.m3u` playlist (an existing XMLTV guide is optional — without 
 5. **Merges** whatever was found — a real schedule, a logo, or a synthesized placeholder schedule for identified 24/7 content — into your XMLTV file, and writes `tvg-logo` back into the M3U.
 6. **Exports** the result as downloadable files, or **publishes** it to a stable URL your player app can point at directly, optionally kept fresh automatically (see below).
 
-The channel table supports sorting (click a column header), bulk actions (select rows → re-match or clear links together), and inline editing — click a `tvg-id` cell, or the small pencil icon on a logo, to set either one manually. A live stats bar in the header tracks how many channels have a full guide, logo-only, or no link at all as you go. The per-channel "Search" dialog always has a **"None"** option after the candidate list, whether or not any matches were found — for a 24/7 channel that's picked up the wrong show/movie, or any other confidently-wrong auto-match, this clears the link outright instead of leaving you stuck picking the least-wrong of several bad options. Anything you fix manually can be exported as a reusable **channel backlog** (see below) instead of needing the same fix again next time, and — since manual matches are captured as protected overrides at publish time — won't be silently re-guessed away by auto-refresh either (see **Keeping a published playlist fresh automatically**).
+The channel table supports sorting (click a column header), bulk actions (select rows → re-match or clear links together), and inline editing — click a `tvg-id` cell, or the small pencil icon on a logo, to set either one manually. A sticky step bar in the header (Load → Sources → Link → Export → Publish) tracks where you are and ticks off steps as you complete them, alongside live counts of channels with a full guide, logo-only, or no link at all. Publish is split into **Publish**, **Auto-refresh** and **Health & guides** tabs, and long explanations are tucked into collapsible "how this works" notes; the layout is responsive down to phone width and has matching light and dark themes. The per-channel "Search" dialog always has a **"None"** option after the candidate list, whether or not any matches were found — for a 24/7 channel that's picked up the wrong show/movie, or any other confidently-wrong auto-match, this clears the link outright instead of leaving you stuck picking the least-wrong of several bad options. Anything you fix manually can be exported as a reusable **channel backlog** (see below) instead of needing the same fix again next time, and — since manual matches are captured as protected overrides at publish time — won't be silently re-guessed away by auto-refresh either (see **Keeping a published playlist fresh automatically**).
 
 ## Architecture
 
@@ -58,6 +58,9 @@ worker.js                 Cloudflare Worker entry point — one fetch
                          back to static assets for everything else
 public/                  static frontend — identical against either backend
 public/index.html, app.js  the M3U/EPG linker (import, match, review, export, publish)
+public/ui.js              presentation-only glue for the linker: Publish tabs,
+                         step-nav scroll-spy and progress ticks (reads the
+                         DOM, owns no data — app.js owns all state)
 public/watch.html, watch.js  the /watch live viewer — DOM/browser glue only
 public/watch-core.js      pure viewer logic (parsing, now/next, error
                          classification, redaction) — no DOM references,
@@ -145,7 +148,7 @@ Every route below is implemented once in `shared/epg-service.js` and exposed ide
 | `GET /iptv/:slug.m3u` | — | The published playlist. `audio/x-mpegurl; charset=utf-8`, `ETag`, 5-minute revalidating cache. `404` + JSON (`code: "PLAYLIST_NOT_FOUND"`) if nothing's been published under that slug. |
 | `GET /epg/:slug.xml` | — | The published guide. `application/xml; charset=utf-8`, `ETag`, plus `X-EPG-Freshness` (`fresh`/`ending-soon`/`expired`/`no-programmes`), `X-EPG-Latest-Stop`, `X-Hosted-Version`. `404` + JSON (`code: "EPG_NOT_FOUND"`) if missing; `503` + JSON if the stored guide is corrupt and no last-known-good version exists. `HEAD` is supported on both content routes. |
 | `GET /api/health/epg/:slug` | — | `{ ok, status, slug, published, playlist, epg, mapping, storage, warnings, checkedAt }`. `status` is one of `healthy`, `degraded`, `stale`, `invalid`, `missing`. Diagnostic metadata only — never a stream URL, playlist body or credential. This is the endpoint to check first when a player shows no guide. |
-| `GET /api/health/epg` | — | `{ ok, status, count, attention, scheduler, slugs, warnings, checkedAt }` — every published slug with its guide age, expiry countdown (`expiry.inMs` / `expiry.expired`), live current/future programme count, renewal state (`renewal`: `auto` \| `will-expire` \| `paused` \| `overdue`), and refresh detail (`refresh.lastRunAt` / `nextRunAt` / `lastRunStatus`). Rows are sorted worst-first by `attentionRank` (expired, then expiring soon, then unrenewed, then healthy). `attention` counts what is broken; `scheduler` says whether anything is actually executing enabled configs. This is what the UI's **Published guides & freshness** table renders, and the one call that answers "is any of my guides about to expire?". |
+| `GET /api/health/epg` | — | `{ ok, status, count, attention, scheduler, slugs, warnings, checkedAt }` — every published slug with its guide age, expiry countdown (`expiry.inMs` / `expiry.expired`), live current/future programme count, renewal state (`renewal`: `auto` \| `will-expire` \| `paused` \| `overdue`), and refresh detail (`refresh.lastRunAt` / `nextRunAt` / `lastRunStatus`). Rows are sorted worst-first by `attentionRank` (expired, then expiring soon, then unrenewed, then healthy). `attention` counts what is broken; `scheduler` says whether anything is actually executing enabled configs. This is what the UI's **Publish → Health & guides** table renders, and the one call that answers "is any of my guides about to expire?". |
 
 Every remote fetch (a custom guide URL, an auto-refresh's M3U source, a worker's channel list) is capped at 15MB, checked both via `Content-Length` and while streaming — see **Notes** for why, and **`guides/`** below for the workaround when a source you want is larger than that.
 
@@ -162,7 +165,7 @@ https://iptv4u.matthurley.dev/epg/yourepg.xml
 
 Point TiViMate (or any player that takes a playlist/EPG URL) at those, and re-publishing later updates the same URLs in place — no need to touch the player app again.
 
-The slug is remembered across sessions (autosave, and a saved/loaded project file both carry it) as soon as you set it — you don't need to actually click Publish first, just entering it and clicking elsewhere is enough. Resuming a previous session then shows these URLs and the "Watch Live in Browser" link immediately, without needing to re-publish just to see them again. They're deterministic from the slug alone, so this is just redisplaying known information, not implying anything's been freshly re-published — if you've changed the playlist since the last publish, hit Publish again to actually push the update. (A session saved before this behavior existed won't have a slug to restore — just re-enter it once and it'll carry forward from then on.)
+The slug is remembered across sessions (autosave, and a saved/loaded project file both carry it) as soon as you set it — you don't need to actually click Publish first, just entering it and clicking elsewhere is enough. Resuming a previous session then shows these URLs and the "Watch live in browser" link immediately, without needing to re-publish just to see them again. They're deterministic from the slug alone, so this is just redisplaying known information, not implying anything's been freshly re-published — if you've changed the playlist since the last publish, hit Publish again to actually push the update. (A session saved before this behavior existed won't have a slug to restore — just re-enter it once and it'll carry forward from then on.)
 
 > **These URLs are public and unauthenticated.** Anyone who knows the exact slug can fetch your playlist and channel stream URLs. Pick a slug that isn't trivially guessable if your provider embeds private access tokens in the stream URLs (many IPTV services do) — treat the link like a password, not a username.
 
@@ -268,7 +271,7 @@ disconnected.
    ```
    `freshness: expired` with `current/future: 0` means every programme has finished: the playlist will load in TiViMate and the guide will be completely empty.
 5. **Compare the identifiers:** the same command reports `matched ids` and coverage. `0` matched ids means the M3U `tvg-id` values and the guide's `<channel id>` values no longer line up — players join the two by exact string equality.
-6. **Ask the server what it thinks:** `curl -s https://<your-host>/api/health/epg/<slug>` returns `healthy`, `degraded`, `stale`, `invalid` or `missing`, with counts, coverage, freshness, the active version and warnings. The UI's **EPG health → Test Published Files** shows the same report.
+6. **Ask the server what it thinks:** `curl -s https://<your-host>/api/health/epg/<slug>` returns `healthy`, `degraded`, `stale`, `invalid` or `missing`, with counts, coverage, freshness, the active version and warnings. The UI's **Publish → Health & guides → Test published files** shows the same report.
 7. **Check the active published version and when it was published** (`storage.activeVersion` / `storage.publishedAt` in that report, or the manifest). A guide published days ago with no auto-refresh is the expected way this happens.
 8. **Only once the server checks pass**, republish (the UI blocks a publish that would leave you in this state) or trigger **Refresh Now**. If guide sources themselves have gone stale, refresh those first — see **`guides/`**.
 9. **Then refresh the EPG in TiViMate.** Removing and re-adding the guide is a last resort for a player-side cache, not a first step — and it will not help if steps 1-8 aren't green.
@@ -284,8 +287,8 @@ last programme ends, the file is still valid XML, still serves `200`, still has
 - 24/7 channels get synthesized placeholder programmes for 3 days from the moment of publishing.
 - Nothing re-publishes automatically unless you've saved an auto-refresh config for that slug — **and publishing does not create one.** Enrolment is a separate, deliberate step (see below).
 
-So: for any slug you point a player at, configure **Keep it fresh automatically**
-(M3U source URL + interval), and check **EPG health** after each publish. The
+So: for any slug you point a player at, configure the **Auto-refresh** tab
+(M3U source URL + interval), and check **Health & guides** after each publish. The
 pre-publication gate refuses to publish an all-expired guide, so the failure
 mode from here on is a guide that ages out *after* it was published — which the
 health endpoint reports as `stale` and which auto-refresh prevents.
@@ -311,7 +314,7 @@ That is also the server's own message: `POST /api/publish` returns a
 publication whose guide has current programmes and no renewal schedule. It is a
 warning rather than an error because the files really are fine — they simply
 will not stay fine. **Enable Auto Refresh Now** enrols the slug using the M3U
-source URL from the **Keep it fresh automatically** panel; if that field is
+source URL from the **Auto-refresh** tab; if that field is
 still empty it focuses it and says what to paste, rather than sending you off to
 read anything.
 
@@ -400,21 +403,21 @@ Combining more than one is genuinely useful, not just a convenience: a general-l
 
 ### Building your own channel backlog
 
-For channels nothing automatic can resolve at all (a channel number the public catalog just doesn't track, a provider-specific rebrand, ...), inline-edit the `tvg-id` and/or logo directly in the table — then **Step 6 → "Export Channel Backlog (XMLTV)"** exports every channel you've manually fixed as a small channel-only XMLTV file (id/name/icon, no programmes). Commit it to your own repo (the `guides/` folder is a natural place) and add its raw URL to the custom guide URL field: future re-imports of the same provider lineup resolve those channels automatically, without needing the same manual fix again — a backlog you own and control, independent of what the public catalogs happen to track.
+For channels nothing automatic can resolve at all (a channel number the public catalog just doesn't track, a provider-specific rebrand, ...), inline-edit the `tvg-id` and/or logo directly in the table — then **Project → "Export backlog (XMLTV)"** exports every channel you've manually fixed as a small channel-only XMLTV file (id/name/icon, no programmes). Commit it to your own repo (the `guides/` folder is a natural place) and add its raw URL to the custom guide URL field: future re-imports of the same provider lineup resolve those channels automatically, without needing the same manual fix again — a backlog you own and control, independent of what the public catalogs happen to track.
 
 ## Keeping a published playlist fresh automatically
 
-Step 5 also has an auto-refresh section: give it an M3U **URL** (instead of just a one-off file upload) and a refresh interval, and it periodically re-fetches that URL, re-matches every channel, and re-publishes under the same slug — no need to come back and re-upload every time your provider updates the lineup.
+Step 5 also has an **Auto-refresh** tab: give it an M3U **URL** (instead of just a one-off file upload) and a refresh interval, and it periodically re-fetches that URL, re-matches every channel, and re-publishes under the same slug — no need to come back and re-upload every time your provider updates the lineup.
 
 **Two things have to both be true, and the UI now says which one isn't:**
 
-1. **A config exists for the slug.** Saved by **Save Auto-Refresh Config** (or `POST /api/refresh-config`) and nothing else. Publishing a playlist does *not* create one, and no code path creates one implicitly, so `GET /api/refresh-config/<slug>` returning `config: null` means this step was never done for that slug — the guide has no way to renew itself.
+1. **A config exists for the slug.** Saved by **Save auto-refresh** (or `POST /api/refresh-config`) and nothing else. Publishing a playlist does *not* create one, and no code path creates one implicitly, so `GET /api/refresh-config/<slug>` returning `config: null` means this step was never done for that slug — the guide has no way to renew itself.
 2. **That config has an interval of `6h`/`12h`/`24h`.** A config saved with the interval selector on **Off** is stored, reads back fine, and is *never due* — it will not run, ever. The interval selector defaults to **Daily** for this reason; if you deliberately pick Off, the UI tells you it will still expire, and `/api/health/epg` reports it as `AUTO_REFRESH_PAUSED` rather than as enabled.
 
 - **Local / self-hosted**: `npm start` runs an in-process scheduler (hourly by default: `IPTV4U_REFRESH_TICK_MS`, disable with `IPTV4U_NO_SCHEDULER=1`) that checks every saved config for whether it's due, using the same code path as the Worker. **Refresh Now** triggers one immediately on demand.
 - **Cloudflare**: a Cron Trigger (`wrangler.toml`'s `[triggers]`, fires hourly) checks every saved config and runs any that are actually due per their own interval — Cloudflare only supports fixed cron schedules, not one per user, hence the hourly tick + due-check rather than a genuinely per-config schedule.
 - **A config and its slug's published files are both stored with no expiry.** They are the only thing standing between a working guide and silent expiry, so they must not disappear on their own (they previously inherited the 30-day cache TTL, which made auto-refresh self-defeating: the config would expire, the guide would stop being renewed, and then the guide would expire too).
-- **Check it actually ran**: the status line under the buttons shows the last run, and the **Published guides & freshness** table shows last run, next run and status per slug, so a saved-but-never-executed config is visible instead of implied.
+- **Check it actually ran**: the status line under the buttons shows the last run, and the **Health & guides** table shows last run, next run and status per slug, so a saved-but-never-executed config is visible instead of implied.
 
 ### How a guide can still expire despite auto-refresh
 
@@ -536,4 +539,4 @@ The pre-publication gate then checks the contract across the whole file pair
 - **Every remote fetch (custom guide URLs, worker channel lists, auto-refresh's M3U source) is capped at 15MB.** Cloudflare Workers have a ~128MB per-isolate memory ceiling, and a large XMLTV guide parses into an in-memory object graph several times the size of its raw bytes — a 50MB+ guide crashes the whole Worker invocation outright (an opaque Cloudflare "error 1102") rather than just failing the one request that triggered it. The cap is enforced identically on both platforms (Node has far more headroom and would handle a bigger file fine, but a consistent, predictable limit beats one that silently depends on which backend happens to be running). If a source you want is larger, filter it down first — see `guides/README.md` for how this was done for the NZ Sky Sport guide.
 - Not every internet EPG is indexable from one source, but you can add custom guide/channel URLs in the UI and include them in matching — see **Using your own IPTV provider's EPG** above.
 - 24/7-channel placeholder guides are just that — a single all-day `<programme>` block per day with the identified title, not a real schedule.
-- Progress autosaves to the browser (`localStorage`); "Save Project File" / "Load Project File" gives you a portable `.json` backup of the same state.
+- Progress autosaves to the browser (`localStorage`); "Save project file" / "Load project file" gives you a portable `.json` backup of the same state.

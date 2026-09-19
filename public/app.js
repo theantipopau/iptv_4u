@@ -1688,7 +1688,13 @@ function renderGuidesTable(report) {
       item.textContent = `${warning.slug}: ${warning.message}`;
       list.appendChild(item);
     }
-    table.appendChild(list);
+    // Each row's Status column already says this; the full list is one click away.
+    const details = document.createElement('details');
+    details.className = 'help';
+    const summary = document.createElement('summary');
+    summary.textContent = `All ${others.length} warning${others.length === 1 ? '' : 's'} in detail`;
+    details.append(summary, list);
+    table.appendChild(details);
   }
 
   renderSchedulerNote(report.scheduler);
