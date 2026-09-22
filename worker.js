@@ -57,6 +57,12 @@ function fromHosted(result) {
   return new Response(result.body, { status: result.status, headers });
 }
 
+// Hostnames this Worker answers on (wrangler.toml [vars]). An auto-refresh
+// source URL on one of these is read from storage, not fetched.
+function selfHostnames(env) {
+  return String(env.SELF_HOSTNAMES || '').split(',').map((host) => host.trim()).filter(Boolean);
+}
+
 async function resolveTmdbApiKey(env) {
   // Secrets Store binding — an object with an async .get(), not a plain
   // string like the old (broken-on-GitHub-deploy) dashboard variable was.
@@ -128,7 +134,9 @@ export default {
           error.code = 'REFRESH_CONFIG_NOT_FOUND';
           throw error;
         }
-        return ok({ config: await runAutoRefresh(cache, hostedStore, await resolveTmdbApiKey(env), config) });
+        return ok({ config: await runAutoRefresh(cache, hostedStore, await resolveTmdbApiKey(env), config, {
+          selfHosts: [...selfHostnames(env), url.hostname]
+        }) });
       }
 
       const iptvMatch = pathname.match(/^\/iptv\/([^/]+)\.m3u$/i);
@@ -195,7 +203,7 @@ export default {
         const tmdbApiKey = await resolveTmdbApiKey(env);
         // Shared with the local scheduler in server.js, so both runtimes
         // discover due work and report failures the same way.
-        await runDueAutoRefreshes(cache, hostedStore, tmdbApiKey);
+        await runDueAutoRefreshes(cache, hostedStore, tmdbApiKey, { selfHosts: selfHostnames(env) });
       } catch (error) {
         logEvent('epg.autoRefresh.failed', { errorCode: error.code || null, error: error.message }, 'error');
       }

@@ -151,7 +151,7 @@ app.post('/api/refresh-now', handle(async (req) => {
     error.code = 'REFRESH_CONFIG_NOT_FOUND';
     throw error;
   }
-  return { config: await runAutoRefresh(cache, hostedStore, TMDB_API_KEY, config) };
+  return { config: await runAutoRefresh(cache, hostedStore, TMDB_API_KEY, config, { selfHosts: [...LOCAL_HOSTS, req.hostname] }) };
 }));
 
 // ---- local auto-refresh scheduler ------------------------------------------
@@ -161,6 +161,8 @@ app.post('/api/refresh-now', handle(async (req) => {
 // never executed by anything, so its guide silently aged out exactly like a
 // slug with no config at all. Same tick, same due-check, same code path as
 // the Worker — only the timer is different.
+
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', ...String(process.env.IPTV4U_SELF_HOSTNAMES || '').split(',').map((h) => h.trim()).filter(Boolean)];
 
 const AUTO_REFRESH_TICK_MS = Number(process.env.IPTV4U_REFRESH_TICK_MS || 60 * 60 * 1000);
 
@@ -176,7 +178,7 @@ export function startAutoRefreshScheduler() {
     if (running) return;
     running = true;
     try {
-      await runDueAutoRefreshes(cache, hostedStore, TMDB_API_KEY);
+      await runDueAutoRefreshes(cache, hostedStore, TMDB_API_KEY, { selfHosts: LOCAL_HOSTS });
     } catch (error) {
       logEvent('epg.autoRefresh.tick.failed', { errorCode: error.code || null, error: error.message }, 'error');
     } finally {

@@ -36,5 +36,11 @@ secret_name = "tmdb-api-key"
 # worker.js checks each saved refresh-config for whether it's actually
 # due yet per its own interval (Cloudflare only supports fixed cron
 # schedules, not one per user, hence the hourly tick + due-check).
+# Hostnames this Worker is served on. An auto-refresh "M3U source URL" that
+# points back at this app's own /iptv/<slug>.m3u is read straight from KV,
+# because a Worker fetching its own custom domain gets a 522 from Cloudflare.
+[vars]
+SELF_HOSTNAMES = "iptv4u.matthurley.dev,iptv-4u.matt-hurley91.workers.dev"
+
 [triggers]
 crons = ["0 * * * *"]

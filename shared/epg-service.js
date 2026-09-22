@@ -1125,6 +1125,10 @@ const REFRESH_INTERVALS_MS = {
 // after that, walking around the clock a hour per day. A tolerance smaller
 // than the tick interval stops the drift without ever double-running.
 const REFRESH_DUE_TOLERANCE_MS = 5 * 60 * 1000;
+// A failed run is retried on the next hourly tick rather than waiting a full
+// interval (or until tomorrow for a fixed-time config): a guide only covers a
+// few days, so one bad night shouldn't cost a day of schedule.
+const RETRY_AFTER_FAILURE_MS = 60 * 60 * 1000;
 
 const DEFAULT_REFRESH_TIME_ZONE = 'UTC';
 
@@ -1379,20 +1383,57 @@ function nextDailyAtRun(config, now) {
   return new Date(now + deltaHours * 3600000 - msIntoHour).toISOString();
 }
 
+function isFailureRetryDue(config, now) {
+  return config.lastRunStatus === 'error'
+    && Number.isFinite(config.lastRunAt)
+    && now - config.lastRunAt >= RETRY_AFTER_FAILURE_MS - REFRESH_DUE_TOLERANCE_MS;
+}
+
 export function isRefreshDue(config, now = Date.now()) {
   if (!config) return false;
-  if (Number.isInteger(config.dailyAtHour)) return isDailyAtDue(config, now);
+  if (Number.isInteger(config.dailyAtHour)) return isDailyAtDue(config, now) || isFailureRetryDue(config, now);
   if (!config.intervalKey) return false;
   const intervalMs = REFRESH_INTERVALS_MS[config.intervalKey];
   if (!intervalMs) return false;
   if (!config.lastRunAt) return true;
+  if (isFailureRetryDue(config, now)) return true;
   return now - config.lastRunAt >= intervalMs - REFRESH_DUE_TOLERANCE_MS;
+}
+
+/**
+ * If `url` is this deployment's own published playlist (/iptv/<slug>.m3u on
+ * one of `selfHosts`), return that slug. A Worker can't fetch its own custom
+ * domain (Cloudflare answers 522), so such a source must be read from storage.
+ */
+export function ownPlaylistSlug(url, selfHosts = []) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const hosts = selfHosts.map((host) => String(host).trim().toLowerCase()).filter(Boolean);
+  if (!hosts.includes(parsed.hostname.toLowerCase())) return null;
+  const match = parsed.pathname.match(/^\/iptv\/([^/]+)\.m3u$/i);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+async function readRefreshSourcePlaylist(hostedStore, url, selfHosts) {
+  const ownSlug = ownPlaylistSlug(url, selfHosts);
+  if (ownSlug) {
+    const content = await getHostedFile(hostedStore, ownSlug, 'playlist');
+    if (!content) {
+      throw Object.assign(new Error(`No playlist is published under "${ownSlug}" to refresh from.`), { code: 'REFRESH_SOURCE_NOT_PUBLISHED' });
+    }
+    return content;
+  }
+  return fetchTextMaybeGzip(url);
 }
 
 export async function runAutoRefresh(cache, hostedStore, apiKey, config, options = {}) {
   const runAt = options.now ?? Date.now();
   try {
-    const m3uText = await fetchTextMaybeGzip(config.m3uUrl);
+    const m3uText = await readRefreshSourcePlaylist(hostedStore, config.m3uUrl, options.selfHosts || []);
     const channels = parseM3U(m3uText);
     const overrides = await getChannelOverrides(hostedStore, config.slug);
 
@@ -1619,7 +1660,7 @@ export async function runDueAutoRefreshes(cache, hostedStore, apiKey, options = 
     // failed" is what a reader needs, not "ran 1" while two configs were due.
     ran += 1;
     try {
-      await runAutoRefresh(cache, hostedStore, apiKey, config, { now });
+      await runAutoRefresh(cache, hostedStore, apiKey, config, { now, selfHosts: options.selfHosts });
       results.push({ slug: config.slug, ran: true, status: 'ok' });
     } catch (error) {
       failed += 1;
