@@ -132,7 +132,12 @@ export function createKvCache(kv, options = {}) {
     }
   }
 
-  return { get, getStale, getEntry, set, list };
+  async function remove(name) {
+    requireBinding();
+    await kv.delete(name);
+  }
+
+  return { get, getStale, getEntry, set, list, remove };
 }
 
 /**

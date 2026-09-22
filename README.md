@@ -407,7 +407,15 @@ For channels nothing automatic can resolve at all (a channel number the public c
 
 ## Keeping a published playlist fresh automatically
 
-Step 5 also has an **Auto-refresh** tab: give it an M3U **URL** (instead of just a one-off file upload) and a refresh interval, and it periodically re-fetches that URL, re-matches every channel, and re-publishes under the same slug — no need to come back and re-upload every time your provider updates the lineup.
+Step 5 also has an **Auto-refresh** tab: give it an M3U **URL** and a refresh interval, and it periodically re-fetches that URL, renews every channel's schedule, and re-publishes under the same slug. The URL can be this app's own published playlist (`https://<your-host>/iptv/<slug>.m3u`): that's read straight from storage, because a Worker can't fetch its own custom domain (Cloudflare answers `522`). List the hostnames in `wrangler.toml`'s `SELF_HOSTNAMES`.
+
+**A refresh renews schedules; it doesn't re-match.** Every Publish saves a *plan*: each channel's match, or its deliberate lack of one. A scheduled run downloads each guide source that plan uses, streams through it, and keeps only your channels' `<channel>`/`<programme>` elements. It never loads a whole guide into memory, and it doesn't search the public catalogs. For a 254-channel lineup that's about 0.4 s CPU and 40 MB, against about 60 s and 600 MB for a full re-match. Re-matching never fitted a Worker's limits (it failed with `1102`), and it doesn't need repeating: matches don't change overnight, schedules do.
+
+- **Channels added to the playlist since the last publish** are left as the playlist has them (`lastRunUnplannedCount`). Match them in the app and publish to include them.
+- **A slug published before plans existed** has none. On Cloudflare its refresh fails with `REFRESH_PLAN_MISSING` and the current guide stays live. Press **Publish** once to save a plan. (`npm start` has no such limit and falls back to a full re-match.)
+- **A failed run is retried on the next hourly tick**, not after a whole interval, so one bad night doesn't cost a day of schedule.
+- **Storage stays bounded.** Only the active and previous published versions are kept; older ones are deleted at publish time.
+
 
 **Two things have to both be true, and the UI now says which one isn't:**
 
@@ -428,6 +436,7 @@ Auto-refresh removes the *automatic* expiry, not every way to lose EPG data. Wha
 | A run was due and never executed (missing Cron Trigger, `IPTV4U_NO_SCHEDULER=1`, a scheduler that died) | `AUTO_REFRESH_OVERDUE` per slug, `SCHEDULER_NOT_OBSERVED` when nothing has ever run, `Enabled — but not running` in the dashboard |
 | A run executed and failed to publish (sources only had expired programmes, upstream 5xx, a guide URL that stopped being XML) | `AUTO_REFRESH_FAILING` with the recorded `lastRunErrorCode`; the previous guide stays live on purpose |
 | The config exists but its interval is Off | `AUTO_REFRESH_PAUSED`, `Saved but Off — will expire` |
+| The slug has no saved plan (published before plans existed) | `AUTO_REFRESH_FAILING` with `REFRESH_PLAN_MISSING`; press Publish once |
 | Nothing renews it at all | `NO_AUTO_REFRESH`, `No — will expire`, and the publish-time warning above |
 | Upstream sources themselves stopped carrying real schedules | the guide stops changing; freshness/`currentOrFuture` still reports it, and `npm run diagnose -- --playlist ... --epg ...` shows whether the data or the matching is at fault |
 

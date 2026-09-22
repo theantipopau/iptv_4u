@@ -104,5 +104,9 @@ export function createNodeCache(dir) {
     return found;
   }
 
-  return { get, getStale, getEntry, set, list };
+  async function remove(name) {
+    fs.rmSync(filePath(name), { force: true });
+  }
+
+  return { get, getStale, getEntry, set, list, remove };
 }

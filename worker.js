@@ -135,7 +135,8 @@ export default {
           throw error;
         }
         return ok({ config: await runAutoRefresh(cache, hostedStore, await resolveTmdbApiKey(env), config, {
-          selfHosts: [...selfHostnames(env), url.hostname]
+          selfHosts: [...selfHostnames(env), url.hostname],
+          requirePlan: true
         }) });
       }
 
@@ -203,7 +204,7 @@ export default {
         const tmdbApiKey = await resolveTmdbApiKey(env);
         // Shared with the local scheduler in server.js, so both runtimes
         // discover due work and report failures the same way.
-        await runDueAutoRefreshes(cache, hostedStore, tmdbApiKey, { selfHosts: selfHostnames(env) });
+        await runDueAutoRefreshes(cache, hostedStore, tmdbApiKey, { selfHosts: selfHostnames(env), requirePlan: true });
       } catch (error) {
         logEvent('epg.autoRefresh.failed', { errorCode: error.code || null, error: error.message }, 'error');
       }

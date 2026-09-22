@@ -31,7 +31,7 @@ import {
   matchAliasRegistry,
   parseCustomGuideUrls
 } from './core.js';
-import { fetchWithTimeout, fetchTextMaybeGzip, runWithConcurrency } from './fetch-utils.js';
+import { fetchWithTimeout, fetchTextMaybeGzip, fetchGuideSubset, runWithConcurrency } from './fetch-utils.js';
 import {
   analyzePlaylist,
   analyzeGuide,
@@ -616,7 +616,7 @@ function publishError(message, code, status = 422) {
  * @param {{m3uContent?: string, xmlContent?: string, overrides?: Object, expectProgrammes?: boolean, now?: number}} input
  * @returns {Promise<{slug: string, version: string, manifest: Object, warnings: Object[], metrics: Object}>}
  */
-export async function publishFiles(store, slugInput, { m3uContent, xmlContent, overrides, expectProgrammes = false, now = Date.now() } = {}) {
+export async function publishFiles(store, slugInput, { m3uContent, xmlContent, overrides, plan, expectProgrammes = false, now = Date.now() } = {}) {
   const slug = slugify(slugInput);
   if (!slug) {
     throw publishError('A valid slug is required (letters, numbers, dashes).', 'SLUG_INVALID', 400);
@@ -744,6 +744,26 @@ export async function publishFiles(store, slugInput, { m3uContent, xmlContent, o
   // leaving stale ones from an earlier publish in place.
   if (overrides && typeof overrides === 'object') {
     await store.set(`overrides:${slug}`, overrides, { strict: true, ttlSeconds: null });
+  }
+
+  // Every channel's current match, so a scheduled refresh can renew the
+  // schedule from the same sources without re-searching (see runAutoRefresh).
+  if (plan && typeof plan === 'object') {
+    await store.set(planKey(slug), plan, { strict: true, ttlSeconds: null });
+  }
+
+  // Keep the active and previous versions only. Each publish writes a full
+  // copy of the guide, so without this a nightly refresh grows storage by a
+  // guide's worth every day.
+  const retired = previousManifest?.previousVersion;
+  if (retired && retired !== version && retired !== manifest.previousVersion && typeof store.remove === 'function') {
+    for (const kind of ['playlist', 'epg']) {
+      try {
+        await store.remove(versionKey(slug, retired, kind));
+      } catch (error) {
+        logEvent('publish.prune.failed', { ...stage, version: retired, errorCode: error.code || null }, 'warn');
+      }
+    }
   }
 
   // The publication is valid and the guide has current programmes — but a
@@ -1049,6 +1069,17 @@ export { quickHash };
 // matched at all, since a manual fix is often precisely because the
 // incoming tvg-id was empty or wrong) and consulted before search on every
 // subsequent auto-refresh run.
+function planKey(slug) {
+  return `plan:${slug}`;
+}
+
+/** Every channel's match at the last publish, keyed by raw M3U channel name. */
+export async function getChannelPlan(store, slugInput) {
+  const slug = slugify(slugInput);
+  if (!slug) return {};
+  return (await store.getStale(planKey(slug))) || {};
+}
+
 export async function getChannelOverrides(store, slugInput) {
   const slug = slugify(slugInput);
   if (!slug) return {};
@@ -1436,12 +1467,26 @@ export async function runAutoRefresh(cache, hostedStore, apiKey, config, options
     const m3uText = await readRefreshSourcePlaylist(hostedStore, config.m3uUrl, options.selfHosts || []);
     const channels = parseM3U(m3uText);
     const overrides = await getChannelOverrides(hostedStore, config.slug);
+    const plan = await getChannelPlan(hostedStore, config.slug);
+    const hasPlan = Object.keys(plan).length > 0;
+    // Re-searching every channel costs ~60s CPU and ~600MB for a 250-channel
+    // lineup — far past a Worker's limits. With a plan, the refresh only renews
+    // schedules; without one, a caller that can't afford a search fails
+    // clearly (and the current guide stays live) instead of crashing.
+    if (!hasPlan && options.requirePlan) {
+      throw Object.assign(
+        new Error('This slug has no saved channel plan yet. Open the app, load your session, and press Publish once — scheduled refreshes use that plan from then on.'),
+        { code: 'REFRESH_PLAN_MISSING' }
+      );
+    }
 
     const links = [];
     let guideCount = 0;
     let logoCount = 0;
     let failedCount = 0;
     let overrideCount = 0;
+    let planCount = 0;
+    let unplannedCount = 0;
 
     // Bounded concurrency: enough to not take forever on a large lineup,
     // low enough to stay a reasonable citizen of both the target hosts
@@ -1454,6 +1499,22 @@ export async function runAutoRefresh(cache, hostedStore, apiKey, config, options
         links.push({ ...override, channelIndex: channel.index });
         overrideCount += 1;
         if (override.canMergeGuide) guideCount += 1;
+        else logoCount += 1;
+        return;
+      }
+
+      if (hasPlan) {
+        const planned = plan[channel.name];
+        if (!planned) {
+          // New since the last publish: left as the playlist has it. Match it
+          // in the app and publish to include it.
+          unplannedCount += 1;
+          return;
+        }
+        planCount += 1;
+        if (!planned.channelId) return; // deliberately "None" at publish time
+        links.push({ ...planned, channelIndex: channel.index });
+        if (planned.canMergeGuide) guideCount += 1;
         else logoCount += 1;
         return;
       }
@@ -1500,8 +1561,8 @@ export async function runAutoRefresh(cache, hostedStore, apiKey, config, options
 
     for (const [guideUrl, guideLinks] of guideGroups) {
       try {
-        const guideXml = await fetchTextMaybeGzip(guideUrl);
-        const guide = parseXmlTv(guideXml);
+        const subset = await fetchGuideSubset(guideUrl, guideLinks.map((link) => link.channelId));
+        const guide = parseXmlTv(subset.xml);
 
         for (const link of guideLinks) {
           // Same contract as mergeGuide: only an exact id match may add a
@@ -1585,6 +1646,8 @@ export async function runAutoRefresh(cache, hostedStore, apiKey, config, options
       lastRunLogoCount: logoCount,
       lastRunFailedCount: failedCount,
       lastRunOverrideCount: overrideCount,
+      lastRunPlanCount: planCount,
+      lastRunUnplannedCount: unplannedCount,
       lastRunProgramCount: publication.metrics.epgPrograms,
       lastRunCurrentOrFutureCount: publication.metrics.epgCurrentOrFuturePrograms,
       lastRunPublishWarnings: publication.warnings.map((w) => w.code),
@@ -1660,7 +1723,7 @@ export async function runDueAutoRefreshes(cache, hostedStore, apiKey, options = 
     // failed" is what a reader needs, not "ran 1" while two configs were due.
     ran += 1;
     try {
-      await runAutoRefresh(cache, hostedStore, apiKey, config, { now, selfHosts: options.selfHosts });
+      await runAutoRefresh(cache, hostedStore, apiKey, config, { now, selfHosts: options.selfHosts, requirePlan: options.requirePlan });
       results.push({ slug: config.slug, ran: true, status: 'ok' });
     } catch (error) {
       failed += 1;

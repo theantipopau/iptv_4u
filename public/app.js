@@ -1046,9 +1046,31 @@ async function publishHosted() {
       };
     }
 
+    // Every channel's match (or deliberate lack of one), so scheduled
+    // refreshes can renew the schedule from the same sources without
+    // re-searching the whole lineup.
+    const plan = {};
+    for (const channel of state.m3uChannels) {
+      const link = state.links.get(channel.index);
+      plan[channel.name] = link
+        ? {
+          channelId: link.channelId,
+          channelName: link.channelName,
+          source: link.source,
+          logoUrl: link.logoUrl,
+          guideUrl: link.guideUrl,
+          canMergeGuide: link.canMergeGuide,
+          tmdb: link.tmdb || null,
+          synthesize: !!link.synthesize,
+          score: link.score,
+          manual: !!link.manual
+        }
+        : { channelId: null };
+    }
+
     const result = await api('/api/publish', {
       method: 'POST',
-      body: JSON.stringify({ slug, m3uContent: m3u, xmlContent: xml, overrides })
+      body: JSON.stringify({ slug, m3uContent: m3u, xmlContent: xml, overrides, plan })
     });
 
     showPublishedUrls(result.slug);

@@ -103,6 +103,9 @@ export function memoryStore(seed = {}) {
       if (Date.now() - entry.updatedAt > maxAgeMs) return null;
       return entry.data;
     },
+    async remove(name) {
+      entries.delete(name);
+    },
     // '*' in either set applies to every key, for tests that can't know a
     // generated version id in advance.
     shouldCorrupt: (name) => state.corruptWrites.has(name) || state.corruptWrites.has('*'),
