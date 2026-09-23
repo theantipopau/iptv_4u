@@ -258,7 +258,7 @@ and `...:versions:<version>:playlist|epg` hold that version's content. Setting
 
 ## Being told when a guide is about to die
 
-`.github/workflows/guide-health.yml` runs once a day on GitHub's free runners (after the nightly renewals). It reads `/api/health/epg` and, if any guide **with auto-refresh configured** is failing to renew, overdue, missing, expired or down to less than 48 hours of schedule, opens an `epg-health` issue assigned to the repo owner, which GitHub emails you about. While the problem stays the same it only updates the issue text. When the problem changes it comments, and once everything is healthy it closes the issue. Issue text uses masked ids only, because the repo is public. `node scripts/health-alert.mjs` with `IPTV4U_BASE` set runs the same check by hand.
+`.github/workflows/guide-health.yml` runs once a day on GitHub's free runners (after the nightly renewals). It reads `/api/health/epg` and, if any guide **with auto-refresh configured** is failing to renew, overdue, missing, expired or down to less than 24 hours of schedule (a daily-renewed guide normally bottoms out around 30 hours just before its renewal), opens an `epg-health` issue assigned to the repo owner, which GitHub emails you about. While the problem stays the same it only updates the issue text. When the problem changes it comments, and once everything is healthy it closes the issue. Issue text uses masked ids only, because the repo is public. `node scripts/health-alert.mjs` with `IPTV4U_BASE` set runs the same check by hand.
 
 The app's header shows the same thing for your own slug at a glance: **"matt · 3.8 days left · renews every 24 hours"**, green, amber or red. Click it for **Publish → Health & guides**.
 

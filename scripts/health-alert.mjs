@@ -15,9 +15,10 @@ if (!base) {
   process.exit(2);
 }
 
-// A renewing guide sits at ~3-4 days of schedule; under two means at least a
-// couple of renewals have been missed.
-const LOW_RUNWAY_MS = 48 * 60 * 60 * 1000;
+// Provider guides are front-loaded: most programmes end within a day or two of
+// download, so a guide renewed daily bottoms out around 30 hours just before
+// its next renewal. Under 24 hours means a renewal has been missed.
+const LOW_RUNWAY_MS = 24 * 60 * 60 * 1000;
 const FAILURE_CODES = new Set(['AUTO_REFRESH_FAILING', 'AUTO_REFRESH_OVERDUE', 'GUIDE_MISSING', 'GUIDE_EXPIRED']);
 
 const response = await fetch(`${base}/api/health/epg`);
@@ -36,12 +37,13 @@ for (const row of report.slugs || []) {
   const inMs = row.expiry?.inMs;
   const reasons = [];
   if (codes.length) reasons.push(codes.join(', '));
-  if (Number.isFinite(inMs) && !row.expiry.expired && inMs < LOW_RUNWAY_MS) reasons.push(`only ${hours(inMs)} of schedule left`);
+  const lowRunway = Number.isFinite(inMs) && !row.expiry.expired && inMs < LOW_RUNWAY_MS;
+  if (lowRunway) reasons.push(`only ${hours(inMs)} of schedule left`);
   if (row.refresh.lastRunStatus === 'error') {
     reasons.push(`last renewal failed${row.refresh.lastRunErrorCode ? ` (${row.refresh.lastRunErrorCode})` : ''}: ${row.refresh.lastRunError || 'no message'}`);
   }
   if (reasons.length) {
-    problems.push({ key: `${row.id}:${codes.join('+')}:${row.refresh.lastRunErrorCode || ''}`, text: `- ${label}: ${reasons.join('; ')}` });
+    problems.push({ key: `${row.id}:${codes.join('+')}:${lowRunway ? 'low' : ''}:${row.refresh.lastRunErrorCode || ''}`, text: `- ${label}: ${reasons.join('; ')}` });
   }
 }
 if (report.scheduler?.observed === false) {
