@@ -111,3 +111,76 @@ describe('storage stays bounded', () => {
     assert.deepEqual([...versions].sort(), [manifest.activeVersion, manifest.previousVersion].sort());
   });
 });
+
+describe('one-request build for Publish/Export', () => {
+  test('builds both files from the plan without searching', async () => {
+    const { buildPublication } = await import('../shared/epg-service.js');
+    const guideUrl = dataUrl('text/xml', buildGuide({ ids: ['example.one'], programmesPerChannel: 24 }));
+    const plan = {
+      'Example One': { channelId: 'example.one', channelName: 'Example One', guideUrl, canMergeGuide: true, logoUrl: 'http://example.invalid/one.png', tmdb: null, synthesize: false },
+      Unmatched: { channelId: null },
+      'Brand New': { channelId: 'brand.new', channelName: 'Brand New', logoUrl: 'http://example.invalid/new.png', canMergeGuide: false, synthesize: false, tmdb: null }
+    };
+    const result = await buildPublication(memoryStore(), '', { m3uText: M3U, plan });
+    assert.equal(result.counts.guideCount, 1);
+    assert.equal(result.counts.logoCount, 1);
+    assert.equal(result.counts.unplannedCount, 0);
+    assert.match(result.m3u, /tvg-id="brand\.new"/);
+    assert.match(result.m3u, /tvg-logo="http:\/\/example\.invalid\/one\.png"/);
+    assert.equal((result.xml.match(/<programme /g) || []).length, 24);
+    assert.match(result.xml, /<channel id="brand\.new">/);
+  });
+
+  test('a loaded base guide keeps its other channels, and matched ids are replaced, not duplicated', async () => {
+    const { buildPublication } = await import('../shared/epg-service.js');
+    const guideUrl = dataUrl('text/xml', buildGuide({ ids: ['example.one'], programmesPerChannel: 5 }));
+    const baseXml = buildGuide({ ids: ['example.one', 'kept.other'], programmesPerChannel: 3 });
+    const plan = { 'Example One': { channelId: 'example.one', channelName: 'Example One', guideUrl, canMergeGuide: true, logoUrl: null, tmdb: null, synthesize: false } };
+    const result = await buildPublication(memoryStore(), '', { m3uText: M3U, plan, baseXml });
+    assert.equal((result.xml.match(/channel="example\.one"/g) || []).length, 5);
+    assert.equal((result.xml.match(/channel="kept\.other"/g) || []).length, 3);
+  });
+
+  test('rejects a request with no plan rather than searching', async () => {
+    const { buildPublication } = await import('../shared/epg-service.js');
+    await assert.rejects(() => buildPublication(memoryStore(), '', { m3uText: M3U, plan: {} }), (error) => error.code === 'BUILD_PLAN_MISSING');
+  });
+});
+
+describe('public health report', () => {
+  test('masks slug names, reveals only the one the caller names, and reads no guide bodies', async () => {
+    const { publicHealthReport, publicSlugId } = await import('../shared/epg-service.js');
+    const store = memoryStore();
+    const guide = buildGuide({ ids: ['example.one'], programmesPerChannel: 24 });
+    const m3u = '#EXTM3U\n#EXTINF:-1 tvg-id="example.one",Example One\nhttp://example.invalid/one.m3u8\n';
+    await publishFiles(store, 'secret-one', { m3uContent: m3u, xmlContent: guide });
+    await publishFiles(store, 'secret-two', { m3uContent: m3u, xmlContent: guide });
+    store.state.reads.length = 0;
+
+    const report = await publicHealthReport(store, { reveal: 'secret-one' });
+    const text = JSON.stringify(report);
+    assert.equal(text.includes('secret-two'), false);
+    const mine = report.slugs.find((row) => row.slug === 'secret-one');
+    assert.ok(mine, 'the caller’s own slug is named');
+    assert.equal(mine.id, await publicSlugId(store, 'secret-one'));
+    assert.equal(report.slugs.filter((row) => row.slug === null).length, 1);
+    assert.equal(store.state.reads.some((name) => name.includes(':versions:') || name.endsWith(':xml')), false, 'no guide content read');
+    assert.equal(mine.freshness, 'fresh');
+  });
+});
+
+describe('public health report redaction', () => {
+  test('a recorded run error keeps only the host of the URL it quotes', async () => {
+    const { publicHealthReport } = await import('../shared/epg-service.js');
+    const store = memoryStore();
+    const m3u = '#EXTM3U\n#EXTINF:-1 tvg-id="example.one",Example One\nhttp://example.invalid/one.m3u8\n';
+    await publishFiles(store, 'leaky', { m3uContent: m3u, xmlContent: buildGuide({ ids: ['example.one'], programmesPerChannel: 24 }) });
+    await saveRefreshConfig(store, { slug: 'leaky', m3uUrl: 'https://host.example/iptv/leaky.m3u', intervalKey: '24h' });
+    const config = await store.getStale('refresh-config:leaky');
+    await store.set('refresh-config:leaky', { ...config, lastRunAt: Date.now(), lastRunStatus: 'error', lastRunError: 'Failed to fetch https://host.example/iptv/leaky.m3u and http://epg.provider.example/btv/SECRETTOKEN/x: HTTP 522' });
+    const text = JSON.stringify(await publicHealthReport(store));
+    assert.equal(text.includes('leaky'), false);
+    assert.equal(text.includes('SECRETTOKEN'), false);
+    assert.ok(text.includes('https://host.example/…'));
+  });
+});

@@ -1,0 +1,57 @@
+name: Guide health check
+
+# Opens (or updates) an "epg-health" issue, assigned to the repo owner so it
+# emails them, when a published guide with auto-refresh is failing or close to
+# running out — and closes it again once everything is healthy. Runs on
+# GitHub's free runners; it makes one read-only request to the deployment.
+
+on:
+  schedule:
+    # After the nightly renewals (03:00 Sydney = 17:00 UTC, and ~22:00 UTC).
+    - cron: '37 23 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check published guides
+        id: health
+        env:
+          IPTV4U_BASE: https://iptv4u.matthurley.dev
+          ALERT_BODY_FILE: ${{ runner.temp }}/alert.md
+        run: node scripts/health-alert.mjs
+
+      - name: Open, update or close the alert issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROBLEMS: ${{ steps.health.outputs.problems }}
+          SIGNATURE: ${{ steps.health.outputs.signature }}
+          BODY_FILE: ${{ runner.temp }}/alert.md
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          gh label create epg-health --color d73a4a --description "A published EPG guide needs attention" --force
+          issue=$(gh issue list --label epg-health --state open --json number --jq '.[0].number // empty')
+          if [ "$PROBLEMS" -gt 0 ]; then
+            if [ -z "$issue" ]; then
+              gh issue create --title "EPG guide needs attention" --label epg-health --assignee "$OWNER" --body-file "$BODY_FILE"
+            else
+              previous=$(gh issue view "$issue" --json body --jq .body | grep -o 'signature: [0-9a-f]*' || true)
+              gh issue edit "$issue" --body-file "$BODY_FILE"
+              if [ "$previous" != "signature: $SIGNATURE" ]; then
+                gh issue comment "$issue" --body "The problem changed since this was opened — see the updated description."
+              fi
+            fi
+          elif [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "All auto-refreshed guides are healthy again."
+          fi

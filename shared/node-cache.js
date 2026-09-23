@@ -104,9 +104,22 @@ export function createNodeCache(dir) {
     return found;
   }
 
+  async function listNames(prefix) {
+    let files;
+    try {
+      files = fs.readdirSync(dir);
+    } catch {
+      return [];
+    }
+    const mangledPrefix = mangle(prefix);
+    return files
+      .filter((file) => file.endsWith('.json') && file.startsWith(mangledPrefix))
+      .map((file) => prefix + file.slice(mangledPrefix.length, -'.json'.length).replace(/_/g, ':'));
+  }
+
   async function remove(name) {
     fs.rmSync(filePath(name), { force: true });
   }
 
-  return { get, getStale, getEntry, set, list, remove };
+  return { get, getStale, getEntry, set, list, listNames, remove };
 }

@@ -45,6 +45,11 @@
     if (isEnable && !$('#autoRefreshM3uUrl').value.trim()) showTab('refresh');
   }, true);
 
+  $('#guideStatus')?.addEventListener('click', () => {
+    showTab('health');
+    document.getElementById('sec-publish')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
   // ---- Step nav: scroll-spy ----------------------------------------------
   const navLinks = $$('#stepNav a');
   const sections = navLinks.map((link) => document.getElementById(link.dataset.step)).filter(Boolean);

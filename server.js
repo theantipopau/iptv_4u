@@ -18,7 +18,9 @@ import {
   uploadLogoAsset,
   getLogoAsset,
   assessPublishedHealth,
-  assessAllPublishedHealth
+  publicHealthReport,
+  buildPublication,
+  publicSlugId
 } from './shared/epg-service.js';
 import { buildHostedResponse } from './shared/serve.js';
 import { createNodeCache } from './shared/node-cache.js';
@@ -100,6 +102,8 @@ app.post('/api/apply-identity', handle(async (req) => applyIdentity(req.body)));
 
 app.post('/api/export-m3u', handle(async (req) => exportM3u(req.body)));
 
+app.post('/api/build-from-plan', handle(async (req) => buildPublication(cache, TMDB_API_KEY, req.body)));
+
 app.post('/api/publish', handle(async (req) => publishFiles(hostedStore, req.body.slug, req.body)));
 
 // Published files are served through the same shared layer the Cloudflare
@@ -126,9 +130,12 @@ app.head('/epg/:slug.xml', sendHosted('epg'));
 // Diagnostic endpoint: everything the UI (or a human with curl) needs to tell
 // whether a published pair is healthy, without exposing stream URLs or
 // credentials. Same shape on Express and Cloudflare.
-app.get('/api/health/epg', handle(async () => assessAllPublishedHealth(hostedStore)));
+app.get('/api/health/epg', handle(async (req) => publicHealthReport(hostedStore, { reveal: req.query.slug || null })));
 
-app.get('/api/health/epg/:slug', handle(async (req) => assessPublishedHealth(hostedStore, req.params.slug)));
+app.get('/api/health/epg/:slug', handle(async (req) => ({
+  ...(await assessPublishedHealth(hostedStore, req.params.slug)),
+  id: await publicSlugId(hostedStore, req.params.slug)
+})));
 
 app.post('/api/upload-logo', handle(async (req) => uploadLogoAsset(hostedStore, req.body)));
 

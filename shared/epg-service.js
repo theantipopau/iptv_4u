@@ -1461,6 +1461,165 @@ async function readRefreshSourcePlaylist(hostedStore, url, selfHosts) {
   return fetchTextMaybeGzip(url);
 }
 
+/**
+ * Build the playlist + guide pair for a lineup from resolved matches: manual
+ * overrides first, then the saved plan, then (only when allowed) a search.
+ * Guides are streamed and filtered to the wanted channels, so this stays
+ * within a Worker's CPU and memory limits when no search is needed. Shared by
+ * Publish and the scheduled refresh, so both produce the same files.
+ */
+export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, plan = {}, customGuideUrl = '', searchAll = false, baseXml = null }) {
+  const usePlan = Object.keys(plan).length > 0 && !searchAll;
+  const links = [];
+  let guideCount = 0;
+  let logoCount = 0;
+  let failedCount = 0;
+  let overrideCount = 0;
+  let planCount = 0;
+  let unplannedCount = 0;
+
+  // Bounded concurrency: enough to not take forever on a large lineup,
+  // low enough to stay a reasonable citizen of both the target hosts
+  // and (on Cloudflare) the CPU-time budget for one invocation.
+  await runWithConcurrency(channels, 5, async (channel) => {
+    const override = overrides[channel.name];
+    if (override) {
+      // A manually-confirmed match is used as-is, never re-searched —
+      // that's the entire point (see getChannelOverrides above).
+      links.push({ ...override, channelIndex: channel.index });
+      overrideCount += 1;
+      if (override.canMergeGuide) guideCount += 1;
+      else logoCount += 1;
+      return;
+    }
+
+    if (usePlan) {
+      const planned = plan[channel.name];
+      if (!planned) {
+        // New since the last publish: left as the playlist has it. Match it
+        // in the app and publish to include it.
+        unplannedCount += 1;
+        return;
+      }
+      planCount += 1;
+      if (!planned.channelId) return; // deliberately "None" at publish time
+      links.push({ ...planned, channelIndex: channel.index });
+      if (planned.canMergeGuide) guideCount += 1;
+      else logoCount += 1;
+      return;
+    }
+
+    try {
+      const result = await searchChannel(cache, apiKey, {
+        channelName: channel.name,
+        tvgId: channel.attrs?.['tvg-id'] || '',
+        groupTitle: channel.attrs?.['group-title'] || '',
+        maxSources: MAX_SOURCES_PER_REQUEST,
+        customGuideUrl: customGuideUrl || ''
+      });
+
+      const link = pickBestLink(result.matches, channel);
+      if (link) {
+        links.push(link);
+        if (link.canMergeGuide) guideCount += 1;
+        else logoCount += 1;
+      }
+    } catch {
+      failedCount += 1;
+    }
+  });
+
+  const { m3u } = await exportM3u({ channels, links });
+
+  // Group guide-backed links by guideUrl so a shared guide (e.g. one
+  // custom EPG matching most of the lineup) is fetched and parsed once,
+  // not once per channel that happens to resolve to it.
+  const guideGroups = new Map();
+  const identityLinks = [];
+  for (const link of links) {
+    if (link.canMergeGuide && link.guideUrl && link.channelId) {
+      if (!guideGroups.has(link.guideUrl)) guideGroups.set(link.guideUrl, []);
+      guideGroups.get(link.guideUrl).push(link);
+    } else if (link.logoUrl || link.tmdb) {
+      identityLinks.push(link);
+    }
+  }
+
+  const base = parseXmlTv(baseXml || emptyXmlTvStub()).tv;
+  base.channel = arrify(base.channel);
+  base.programme = arrify(base.programme);
+
+  for (const [guideUrl, guideLinks] of guideGroups) {
+    try {
+      const subset = await fetchGuideSubset(guideUrl, guideLinks.map((link) => link.channelId));
+      const guide = parseXmlTv(subset.xml);
+
+      for (const link of guideLinks) {
+        // Same contract as mergeGuide: only an exact id match may add a
+        // channel node, because the M3U already carries this id as its
+        // tvg-id (see resolveGuideChannel).
+        const matchedChannel = resolveGuideChannel(guide, link.channelId, link.channelName);
+        if (!matchedChannel) continue;
+
+        const existingIdx = base.channel.findIndex((c) => c['@_id'] === matchedChannel.id);
+        let channelNode;
+        if (existingIdx === -1) {
+          channelNode = matchedChannel.raw;
+          if (!channelNode['display-name']) channelNode['display-name'] = [link.channelName || matchedChannel.id];
+          base.channel.push(channelNode);
+        } else {
+          channelNode = base.channel[existingIdx];
+        }
+        if (link.logoUrl) channelNode.icon = { '@_src': link.logoUrl };
+
+        // Replace, never append: a base guide may already hold (older)
+        // programmes for this id.
+        if (baseXml) base.programme = base.programme.filter((p) => p['@_channel'] !== matchedChannel.id);
+        for (const programme of guide.programmes.filter((p) => p['@_channel'] === matchedChannel.id)) {
+          base.programme.push(programme);
+        }
+      }
+    } catch {
+      failedCount += guideLinks.length;
+    }
+  }
+
+  for (const link of identityLinks) {
+    let channelNode = base.channel.find((c) => c['@_id'] === link.channelId);
+    if (!channelNode) {
+      channelNode = { '@_id': link.channelId, 'display-name': [link.channelName || link.channelId] };
+      base.channel.push(channelNode);
+    }
+    const logoUrl = link.logoUrl || (link.tmdb ? link.tmdb.posterUrl : null);
+    if (logoUrl) channelNode.icon = { '@_src': logoUrl };
+
+    if (link.synthesize) {
+      base.programme = base.programme.filter((p) => p['@_channel'] !== link.channelId);
+      const startDate = new Date();
+      startDate.setUTCHours(0, 0, 0, 0);
+      for (let i = 0; i < 3; i += 1) {
+        const start = new Date(startDate.getTime() + i * 86400000);
+        const stop = new Date(start.getTime() + 86400000);
+        const programme = {
+          '@_channel': link.channelId,
+          '@_start': formatXmltvDate(start),
+          '@_stop': formatXmltvDate(stop),
+          title: [{ '#text': link.tmdb?.title || link.channelName || link.channelId, '@_lang': 'en' }],
+          category: [{ '#text': '24/7', '@_lang': 'en' }]
+        };
+        if (link.tmdb?.overview) programme.desc = [{ '#text': link.tmdb.overview, '@_lang': 'en' }];
+        base.programme.push(programme);
+      }
+    }
+  }
+
+  return {
+    m3u,
+    xml: buildXmlTv(base),
+    counts: { guideCount, logoCount, failedCount, overrideCount, planCount, unplannedCount }
+  };
+}
+
 export async function runAutoRefresh(cache, hostedStore, apiKey, config, options = {}) {
   const runAt = options.now ?? Date.now();
   try {
@@ -1480,147 +1639,15 @@ export async function runAutoRefresh(cache, hostedStore, apiKey, config, options
       );
     }
 
-    const links = [];
-    let guideCount = 0;
-    let logoCount = 0;
-    let failedCount = 0;
-    let overrideCount = 0;
-    let planCount = 0;
-    let unplannedCount = 0;
-
-    // Bounded concurrency: enough to not take forever on a large lineup,
-    // low enough to stay a reasonable citizen of both the target hosts
-    // and (on Cloudflare) the CPU-time budget for one invocation.
-    await runWithConcurrency(channels, 5, async (channel) => {
-      const override = overrides[channel.name];
-      if (override) {
-        // A manually-confirmed match is used as-is, never re-searched —
-        // that's the entire point (see getChannelOverrides above).
-        links.push({ ...override, channelIndex: channel.index });
-        overrideCount += 1;
-        if (override.canMergeGuide) guideCount += 1;
-        else logoCount += 1;
-        return;
-      }
-
-      if (hasPlan) {
-        const planned = plan[channel.name];
-        if (!planned) {
-          // New since the last publish: left as the playlist has it. Match it
-          // in the app and publish to include it.
-          unplannedCount += 1;
-          return;
-        }
-        planCount += 1;
-        if (!planned.channelId) return; // deliberately "None" at publish time
-        links.push({ ...planned, channelIndex: channel.index });
-        if (planned.canMergeGuide) guideCount += 1;
-        else logoCount += 1;
-        return;
-      }
-
-      try {
-        const result = await searchChannel(cache, apiKey, {
-          channelName: channel.name,
-          tvgId: channel.attrs?.['tvg-id'] || '',
-          groupTitle: channel.attrs?.['group-title'] || '',
-          maxSources: MAX_SOURCES_PER_REQUEST,
-          customGuideUrl: config.customGuideUrl || ''
-        });
-
-        const link = pickBestLink(result.matches, channel);
-        if (link) {
-          links.push(link);
-          if (link.canMergeGuide) guideCount += 1;
-          else logoCount += 1;
-        }
-      } catch {
-        failedCount += 1;
-      }
+    const { m3u, xml: mergedXml, counts } = await buildFromPlan(cache, apiKey, {
+      channels,
+      overrides,
+      plan,
+      customGuideUrl: config.customGuideUrl || '',
+      searchAll: !hasPlan
     });
+    const { guideCount, logoCount, failedCount, overrideCount, planCount, unplannedCount } = counts;
 
-    const { m3u } = await exportM3u({ channels, links });
-
-    // Group guide-backed links by guideUrl so a shared guide (e.g. one
-    // custom EPG matching most of the lineup) is fetched and parsed once,
-    // not once per channel that happens to resolve to it.
-    const guideGroups = new Map();
-    const identityLinks = [];
-    for (const link of links) {
-      if (link.canMergeGuide && link.guideUrl && link.channelId) {
-        if (!guideGroups.has(link.guideUrl)) guideGroups.set(link.guideUrl, []);
-        guideGroups.get(link.guideUrl).push(link);
-      } else if (link.logoUrl || link.tmdb) {
-        identityLinks.push(link);
-      }
-    }
-
-    const base = parseXmlTv(emptyXmlTvStub()).tv;
-    base.channel = arrify(base.channel);
-    base.programme = arrify(base.programme);
-
-    for (const [guideUrl, guideLinks] of guideGroups) {
-      try {
-        const subset = await fetchGuideSubset(guideUrl, guideLinks.map((link) => link.channelId));
-        const guide = parseXmlTv(subset.xml);
-
-        for (const link of guideLinks) {
-          // Same contract as mergeGuide: only an exact id match may add a
-          // channel node, because the M3U already carries this id as its
-          // tvg-id (see resolveGuideChannel).
-          const matchedChannel = resolveGuideChannel(guide, link.channelId, link.channelName);
-          if (!matchedChannel) continue;
-
-          const existingIdx = base.channel.findIndex((c) => c['@_id'] === matchedChannel.id);
-          let channelNode;
-          if (existingIdx === -1) {
-            channelNode = matchedChannel.raw;
-            if (!channelNode['display-name']) channelNode['display-name'] = [link.channelName || matchedChannel.id];
-            base.channel.push(channelNode);
-          } else {
-            channelNode = base.channel[existingIdx];
-          }
-          if (link.logoUrl) channelNode.icon = { '@_src': link.logoUrl };
-
-          for (const programme of guide.programmes.filter((p) => p['@_channel'] === matchedChannel.id)) {
-            base.programme.push(programme);
-          }
-        }
-      } catch {
-        failedCount += guideLinks.length;
-      }
-    }
-
-    for (const link of identityLinks) {
-      let channelNode = base.channel.find((c) => c['@_id'] === link.channelId);
-      if (!channelNode) {
-        channelNode = { '@_id': link.channelId, 'display-name': [link.channelName || link.channelId] };
-        base.channel.push(channelNode);
-      }
-      const logoUrl = link.logoUrl || (link.tmdb ? link.tmdb.posterUrl : null);
-      if (logoUrl) channelNode.icon = { '@_src': logoUrl };
-
-      if (link.synthesize) {
-        base.programme = base.programme.filter((p) => p['@_channel'] !== link.channelId);
-        const startDate = new Date();
-        startDate.setUTCHours(0, 0, 0, 0);
-        for (let i = 0; i < 3; i += 1) {
-          const start = new Date(startDate.getTime() + i * 86400000);
-          const stop = new Date(start.getTime() + 86400000);
-          const programme = {
-            '@_channel': link.channelId,
-            '@_start': formatXmltvDate(start),
-            '@_stop': formatXmltvDate(stop),
-            title: [{ '#text': link.tmdb?.title || link.channelName || link.channelId, '@_lang': 'en' }],
-            category: [{ '#text': '24/7', '@_lang': 'en' }]
-          };
-          if (link.tmdb?.overview) programme.desc = [{ '#text': link.tmdb.overview, '@_lang': 'en' }];
-          base.programme.push(programme);
-        }
-      }
-    }
-
-    const mergedXml = buildXmlTv(base);
 
     // expectProgrammes: guide-backed channels were matched this run, so a
     // guide with no programmes — or one whose programmes have all already
@@ -1778,7 +1805,6 @@ function freshnessWarning(code, extra = {}) {
  */
 export async function assessAllPublishedHealth(store, options = {}) {
   const now = options.now ?? Date.now();
-  const entries = await store.list(MANIFEST_PREFIX);
   const rows = [];
 
   // Group by slug rather than only looking for a manifest: a slug published
@@ -1787,12 +1813,24 @@ export async function assessAllPublishedHealth(store, options = {}) {
   // the guides most likely to have gone stale unnoticed.
   const manifests = new Map();
   const seen = new Set();
-  for (const entry of entries) {
-    const rest = entry.name.slice(MANIFEST_PREFIX.length);
-    const slug = rest.split(':')[0];
-    if (!slug) continue;
-    seen.add(slug);
-    if (entry.name.endsWith(MANIFEST_SUFFIX) && entry.data) manifests.set(slug, entry.data);
+  if (typeof store.listNames === 'function') {
+    // Names only, then just the small manifests: listing with values would
+    // read every stored guide version (several MB each) on every call.
+    for (const name of await store.listNames(MANIFEST_PREFIX)) {
+      const slug = name.slice(MANIFEST_PREFIX.length).split(':')[0];
+      if (slug) seen.add(slug);
+    }
+    for (const slug of seen) {
+      const manifest = await store.getStale(manifestKey(slug));
+      if (manifest) manifests.set(slug, manifest);
+    }
+  } else {
+    for (const entry of await store.list(MANIFEST_PREFIX)) {
+      const slug = entry.name.slice(MANIFEST_PREFIX.length).split(':')[0];
+      if (!slug) continue;
+      seen.add(slug);
+      if (entry.name.endsWith(MANIFEST_SUFFIX) && entry.data) manifests.set(slug, entry.data);
+    }
   }
 
   for (const slug of [...seen].sort()) {
@@ -2036,3 +2074,92 @@ export function rankAttention({ freshness, renewal }) {
 }
 
 export { slugify };
+
+// ---- public (slug-masked) health report ------------------------------------
+//
+// A slug is the only thing protecting a published playlist, whose stream URLs
+// usually carry provider credentials. The all-slugs report is public, so it
+// must not list slug names: each is replaced by a salted id that can't be
+// reversed by guessing short names. The salt is generated once per store.
+
+const SLUG_ID_SALT_KEY = 'meta:slug-id-salt';
+
+async function slugIdSalt(store) {
+  const existing = await store.getStale(SLUG_ID_SALT_KEY);
+  if (typeof existing === 'string' && existing) return existing;
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  const salt = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  await store.set(SLUG_ID_SALT_KEY, salt, { strict: true, ttlSeconds: null });
+  return salt;
+}
+
+/** Salted, non-reversible id for a slug, as used in the public health report. */
+export async function publicSlugId(store, slugInput) {
+  const slug = slugify(slugInput);
+  if (!slug) return null;
+  return (await sha256Hex(`${await slugIdSalt(store)}\u0000${slug}`)).slice(0, 12);
+}
+
+/**
+ * assessAllPublishedHealth, shallow (manifest metadata only — no guide bodies
+ * are read) and with every slug name replaced by its public id.
+ */
+export async function publicHealthReport(store, options = {}) {
+  const report = await assessAllPublishedHealth(store, { ...options, deep: false });
+  const ids = new Map();
+  for (const row of report.slugs) ids.set(row.slug, await publicSlugId(store, row.slug));
+  const mask = (slug) => (slug ? ids.get(slug) ?? null : null);
+  // A caller that already knows a slug (the app, for its own) gets that one
+  // row's name back; nothing it didn't already know is revealed.
+  const revealed = options.reveal ? slugify(options.reveal) : null;
+  const nameIfKnown = (slug) => (slug && slug === revealed ? slug : null);
+  const scheduler = { ...report.scheduler };
+  for (const key of ['neverRun', 'neverRanAndOverdue', 'overdue']) {
+    if (Array.isArray(scheduler[key])) scheduler[key] = scheduler[key].map(mask);
+  }
+  return redactUrls({
+    ...report,
+    slugs: report.slugs.map((row) => ({ ...row, slug: nameIfKnown(row.slug), id: mask(row.slug) })),
+    warnings: (report.warnings || []).map((warning) => ({ ...warning, slug: nameIfKnown(warning.slug), id: mask(warning.slug) })),
+    scheduler
+  });
+}
+
+// Recorded run errors quote the URL that failed — which can be this app's own
+// /iptv/<slug>.m3u or a provider guide URL with a private token in its path.
+// The public report keeps only scheme and host.
+function redactUrls(value) {
+  const text = JSON.stringify(value).replace(/https?:\/\/[^\s"\\]+/g, (match) => {
+    try {
+      const url = new URL(match);
+      return `${url.protocol}//${url.host}/…`;
+    } catch {
+      return '…';
+    }
+  });
+  return JSON.parse(text);
+}
+
+/**
+ * The Publish/Export build: one request that turns the raw playlist and the
+ * app's per-channel plan into the final playlist + guide, instead of one
+ * request per channel re-sending the whole guide each time. Never searches.
+ */
+export async function buildPublication(cache, apiKey, { m3uText, plan, overrides, baseXml } = {}) {
+  if (typeof m3uText !== 'string' || !m3uText.trim()) {
+    throw Object.assign(new Error('m3uText (the loaded playlist) is required.'), { status: 400, code: 'BUILD_PLAYLIST_MISSING' });
+  }
+  if (!plan || typeof plan !== 'object' || !Object.keys(plan).length) {
+    throw Object.assign(new Error('plan (each channel’s match) is required.'), { status: 400, code: 'BUILD_PLAN_MISSING' });
+  }
+  if (m3uText.length > MAX_PUBLISHED_CONTENT_LENGTH || (typeof baseXml === 'string' && baseXml.length > MAX_PUBLISHED_CONTENT_LENGTH)) {
+    throw Object.assign(new Error('File too large to build (15MB limit per file).'), { status: 413, code: 'CONTENT_TOO_LARGE' });
+  }
+  const channels = parseM3U(m3uText);
+  return buildFromPlan(cache, apiKey, {
+    channels,
+    plan,
+    overrides: overrides && typeof overrides === 'object' ? overrides : {},
+    baseXml: typeof baseXml === 'string' && baseXml.trim() ? baseXml : null
+  });
+}

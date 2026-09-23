@@ -58,6 +58,7 @@ const el = {
   compareIdsBtn: document.getElementById('compareIdsBtn'),
   healthSummary: document.getElementById('healthSummary'),
   statsBar: document.getElementById('statsBar'),
+  guideStatus: document.getElementById('guideStatus'),
   statTotal: document.getElementById('statTotal'),
   statGuide: document.getElementById('statGuide'),
   statLogo: document.getElementById('statLogo'),
@@ -900,16 +901,67 @@ function downloadFile(name, content, type) {
   URL.revokeObjectURL(url);
 }
 
-async function buildFinalM3U() {
-  const links = Array.from(state.links.values());
-  const result = await api('/api/export-m3u', {
-    method: 'POST',
-    body: JSON.stringify({
-      channels: state.m3uChannels,
-      links
-    })
-  });
-  return result.m3u;
+function linkForPlan(link, manual) {
+  return {
+    channelId: link.channelId,
+    channelName: link.channelName,
+    source: link.source,
+    logoUrl: link.logoUrl,
+    guideUrl: link.guideUrl,
+    canMergeGuide: link.canMergeGuide,
+    tmdb: link.tmdb || null,
+    synthesize: !!link.synthesize,
+    score: link.score,
+    manual
+  };
+}
+
+// Every channel's match (or deliberate lack of one), keyed by its raw M3U
+// name. The server builds the files from this, and scheduled refreshes renew
+// the schedule from the same plan without re-searching the lineup.
+function buildPlan() {
+  const plan = {};
+  for (const channel of state.m3uChannels) {
+    const link = state.links.get(channel.index);
+    plan[channel.name] = link ? linkForPlan(link, !!link.manual) : { channelId: null };
+  }
+  return plan;
+}
+
+// Manual links, protected from ever being re-matched by a refresh.
+function buildOverrides() {
+  const overrides = {};
+  for (const channel of state.m3uChannels) {
+    const link = state.links.get(channel.index);
+    if (link?.manual) overrides[channel.name] = linkForPlan(link, true);
+  }
+  return overrides;
+}
+
+// One request builds both files on the server (streaming only the needed
+// channels out of each guide), instead of one request per channel.
+async function buildPublicationFromPlan() {
+  const plan = buildPlan();
+  const overrides = buildOverrides();
+  el.mergeStatus.innerHTML = '<span class="spinner"></span>Building the playlist and guide…';
+  try {
+    const result = await api('/api/build-from-plan', {
+      method: 'POST',
+      body: JSON.stringify({
+        m3uText: state.m3uText,
+        plan,
+        overrides,
+        // Only a guide file you actually loaded is kept as the base.
+        baseXml: state.xmlSummary?.channelCount > 0 ? state.xmlText : null
+      })
+    });
+    const counts = result.counts || {};
+    el.mergeStatus.textContent = `Built — ${counts.guideCount ?? 0} channel(s) with a guide, ${counts.logoCount ?? 0} logo-only${counts.failedCount ? `, ${counts.failedCount} guide source(s) failed` : ''}.`;
+    return { m3u: result.m3u, xml: result.xml, plan, overrides };
+  } catch (error) {
+    el.mergeStatus.textContent = '';
+    throw error;
+  }
 }
 
 async function exportM3U() {
@@ -917,76 +969,29 @@ async function exportM3U() {
     toast('Load files first.', 'error');
     return;
   }
-
-  const m3u = await buildFinalM3U();
-  downloadFile('updated_playlist.m3u', m3u, 'audio/x-mpegurl');
-  toast('Downloaded updated_playlist.m3u', 'success');
-}
-
-async function buildFinalXML() {
-  let merged = state.xmlText;
-  let mergedCount = 0;
-  let errorCount = 0;
-
-  for (const link of state.links.values()) {
-    try {
-      let result;
-      if (link.canMergeGuide && link.guideUrl && link.channelId) {
-        result = await api('/api/merge-guide', {
-          method: 'POST',
-          body: JSON.stringify({
-            baseXml: merged,
-            guideUrl: link.guideUrl,
-            channelId: link.channelId,
-            preferredName: link.channelName,
-            logoUrl: link.logoUrl
-          })
-        });
-      } else if (link.logoUrl || link.tmdb) {
-        result = await api('/api/apply-identity', {
-          method: 'POST',
-          body: JSON.stringify({
-            baseXml: merged,
-            channelId: link.channelId,
-            channelName: link.channelName,
-            logoUrl: link.logoUrl || (link.tmdb ? link.tmdb.posterUrl : null),
-            synthesize: !!link.synthesize,
-            title: link.tmdb ? link.tmdb.title : undefined,
-            overview: link.tmdb ? link.tmdb.overview : undefined,
-            days: 3
-          })
-        });
-      } else {
-        continue;
-      }
-
-      merged = result.mergedXml;
-      mergedCount += 1;
-      el.mergeStatus.innerHTML = `<span class="spinner"></span>Applied ${mergedCount} channel(s)…`;
-    } catch (error) {
-      errorCount += 1;
-      console.error(error);
-    }
+  el.exportM3UBtn.disabled = true;
+  try {
+    const { m3u } = await buildPublicationFromPlan();
+    downloadFile('updated_playlist.m3u', m3u, 'audio/x-mpegurl');
+    toast('Downloaded updated_playlist.m3u', 'success');
+  } finally {
+    el.exportM3UBtn.disabled = false;
   }
-
-  state.xmlText = merged;
-  el.mergeStatus.textContent = `XML update complete. Applied ${mergedCount} linked channel(s)${errorCount ? `, ${errorCount} failed` : ''}.`;
-  autosave();
-  return merged;
 }
 
 async function exportXML() {
-  if (!state.xmlText) {
+  if (!state.m3uChannels.length) {
     toast('Load files first.', 'error');
     return;
   }
-
   el.exportXMLBtn.disabled = true;
-  const merged = await buildFinalXML();
-  el.exportXMLBtn.disabled = false;
-
-  downloadFile('updated_guide.xml', merged, 'application/xml');
-  toast('Downloaded updated_guide.xml', 'success');
+  try {
+    const { xml } = await buildPublicationFromPlan();
+    downloadFile('updated_guide.xml', xml, 'application/xml');
+    toast('Downloaded updated_guide.xml', 'success');
+  } finally {
+    el.exportXMLBtn.disabled = false;
+  }
 }
 
 // ---- publish (hosted M3U/XML for IPTV player apps) -----------------------
@@ -1019,54 +1024,7 @@ async function publishHosted() {
   el.publishStatus.innerHTML = '<span class="spinner"></span>Building and publishing…';
 
   try {
-    const [m3u, xml] = await Promise.all([buildFinalM3U(), buildFinalXML()]);
-
-    // Every currently-manual link becomes a protected override for this
-    // slug — auto-refresh (if configured) will use these as-is instead of
-    // re-matching from scratch, so a manual fix doesn't get silently
-    // undone on the next scheduled run. Keyed by the channel's raw M3U
-    // name since that's the only stable identifier available before a
-    // channel has been matched at all.
-    const overrides = {};
-    for (const link of state.links.values()) {
-      if (!link.manual) continue;
-      const channel = state.m3uChannels.find((c) => c.index === link.channelIndex);
-      if (!channel) continue;
-      overrides[channel.name] = {
-        channelId: link.channelId,
-        channelName: link.channelName,
-        source: link.source,
-        logoUrl: link.logoUrl,
-        guideUrl: link.guideUrl,
-        canMergeGuide: link.canMergeGuide,
-        tmdb: link.tmdb || null,
-        synthesize: !!link.synthesize,
-        score: link.score,
-        manual: true
-      };
-    }
-
-    // Every channel's match (or deliberate lack of one), so scheduled
-    // refreshes can renew the schedule from the same sources without
-    // re-searching the whole lineup.
-    const plan = {};
-    for (const channel of state.m3uChannels) {
-      const link = state.links.get(channel.index);
-      plan[channel.name] = link
-        ? {
-          channelId: link.channelId,
-          channelName: link.channelName,
-          source: link.source,
-          logoUrl: link.logoUrl,
-          guideUrl: link.guideUrl,
-          canMergeGuide: link.canMergeGuide,
-          tmdb: link.tmdb || null,
-          synthesize: !!link.synthesize,
-          score: link.score,
-          manual: !!link.manual
-        }
-        : { channelId: null };
-    }
+    const { m3u, xml, plan, overrides } = await buildPublicationFromPlan();
 
     const result = await api('/api/publish', {
       method: 'POST',
@@ -1436,7 +1394,7 @@ async function refreshNow() {
   }
 
   el.refreshNowBtn.disabled = true;
-  el.autoRefreshStatus.innerHTML = '<span class="spinner"></span>Refreshing — this fetches the M3U, re-matches every channel, and re-publishes…';
+  el.autoRefreshStatus.innerHTML = '<span class="spinner"></span>Refreshing — renewing each channel’s schedule from its saved match and re-publishing…';
   try {
     const result = await api('/api/refresh-now', {
       method: 'POST',
@@ -1444,6 +1402,7 @@ async function refreshNow() {
     });
     el.autoRefreshStatus.textContent = describeRefreshConfig(result.config);
     toast('Refresh complete.', 'success');
+    checkAllGuides({ quiet: true }).catch(() => {});
   } catch (error) {
     el.autoRefreshStatus.textContent = '';
     toast(error.message, 'error');
@@ -1633,7 +1592,7 @@ function renderGuidesTable(report) {
 
     const slug = document.createElement('th');
     slug.scope = 'row';
-    slug.textContent = row.slug;
+    slug.textContent = guideRowLabel(row);
     tr.appendChild(slug);
 
     const age = document.createElement('td');
@@ -1701,13 +1660,13 @@ function renderGuidesTable(report) {
   // Warnings for other slugs than the one currently selected in the Publish
   // box would otherwise be invisible — this is the "your other guide died"
   // alarm.
-  const others = (report.warnings || []).filter((warning) => warning.slug && warning.slug !== el.publishSlug.value.trim());
+  const others = (report.warnings || []).filter((warning) => !warning.slug);
   if (others.length) {
     const list = document.createElement('ul');
     list.className = 'guides-table__warnings';
     for (const warning of others) {
       const item = document.createElement('li');
-      item.textContent = `${warning.slug}: ${warning.message}`;
+      item.textContent = `${guideRowLabel(warning)}: ${warning.message}`;
       list.appendChild(item);
     }
     // Each row's Status column already says this; the full list is one click away.
@@ -1750,14 +1709,27 @@ function renderSchedulerNote(scheduler) {
  * someone thinks to click the dashboard button.
  * @param {Object} report
  */
+// The public report masks slug names (a slug unlocks a playlist full of
+// stream credentials); only the slug this browser already knows comes back
+// named.
+function guideRowLabel(row) {
+  return row.slug ? row.slug : `Other guide #${String(row.id || '').slice(0, 6)}`;
+}
+
+const BROKEN_CODES = new Set(['GUIDE_EXPIRED', 'GUIDE_ENDING_SOON', 'AUTO_REFRESH_FAILING', 'AUTO_REFRESH_OVERDUE', 'GUIDE_MISSING']);
+
+// Only things that are broken or about to be. "No auto-refresh" on some other
+// slug is a standing fact, not an emergency: it lives in the Health tab.
 function renderAttentionBanner(report) {
   const banner = el.attentionBanner;
-  const attention = report?.attention || {};
   const problems = [];
-  if (attention.expired) problems.push(`${attention.expired} guide(s) have already expired — players will show no EPG for every channel`);
-  if (attention.expiringSoon) problems.push(`${attention.expiringSoon} guide(s) run out within 12 hours`);
-  if (attention.noRefresh) problems.push(`${attention.noRefresh} published slug(s) have no auto-refresh and will expire on their own`);
-  if (attention.overdue) problems.push(`${attention.overdue} slug(s) have auto-refresh enabled but nothing is running it`);
+  for (const row of report?.slugs || []) {
+    const broken = (row.warnings || []).filter((warning) => BROKEN_CODES.has(warning.code));
+    if (row.slug && !row.refresh?.enabled && row.published) {
+      broken.push({ message: 'No auto-refresh — this guide will expire on its own. Set it up under Publish → Auto-refresh.' });
+    }
+    for (const warning of broken) problems.push(`${guideRowLabel(row)}: ${warning.message}`);
+  }
 
   if (!problems.length) {
     banner.hidden = true;
@@ -1769,20 +1741,74 @@ function renderAttentionBanner(report) {
   const heading = document.createElement('strong');
   heading.textContent = 'Needs attention:';
   const list = document.createElement('ul');
-  for (const problem of problems) {
+  const SHOWN = 3;
+  for (const problem of problems.slice(0, SHOWN)) {
     const item = document.createElement('li');
     item.textContent = problem;
     list.appendChild(item);
   }
+  if (problems.length > SHOWN) {
+    const more = document.createElement('li');
+    more.textContent = `…and ${problems.length - SHOWN} more — see Publish → Health & guides.`;
+    list.appendChild(more);
+  }
   banner.append(heading, list);
+}
+
+// One line in the header: is *your* guide alive, for how long, and is
+// anything renewing it.
+function renderGuideStatus(row, slug) {
+  const pill = el.guideStatus;
+  if (!slug) {
+    pill.hidden = true;
+    return;
+  }
+  pill.hidden = false;
+  const refresh = row?.refresh || {};
+  const warnings = new Set((row?.warnings || []).map((warning) => warning.code));
+  let tone = 'ok';
+  const parts = [slug];
+
+  if (!row || !row.published) {
+    tone = 'warn';
+    parts.push('not published yet');
+  } else {
+    const expiry = formatExpiry(row.expiry);
+    if (row.expiry?.expired || warnings.has('GUIDE_MISSING')) tone = 'bad';
+    else if (expiry.kind === 'urgent') tone = 'warn';
+    const leftMs = row.expiry?.inMs;
+    const left = !Number.isFinite(leftMs) ? 'expiry unknown'
+      : leftMs >= 86400000 ? `${(leftMs / 86400000).toFixed(1)} days left` : `${Math.max(1, Math.round(leftMs / 3600000))} h left`;
+    parts.push(row.expiry?.expired ? 'guide expired' : left);
+
+    if (warnings.has('AUTO_REFRESH_FAILING') || warnings.has('AUTO_REFRESH_OVERDUE')) {
+      tone = 'bad';
+      parts.push('renewal failing');
+    } else if (refresh.enabled) {
+      parts.push(`renews ${scheduleLabel(refresh).replace(/ \(.*\)$/, '')}`);
+    } else {
+      if (tone === 'ok') tone = 'warn';
+      parts.push('no auto-refresh');
+    }
+  }
+
+  pill.dataset.tone = tone;
+  pill.querySelector('.guide-status__text').textContent = parts.join(' · ');
+  const detail = [];
+  if (refresh.lastRunAt) detail.push(`Last renewal ${new Date(refresh.lastRunAt).toLocaleString()} — ${refresh.lastRunStatus === 'ok' ? 'OK' : `failed: ${refresh.lastRunError || refresh.lastRunErrorCode || 'error'}`}`);
+  if (refresh.nextRunAt) detail.push(`Next renewal ${new Date(refresh.nextRunAt).toLocaleString()}`);
+  if (row?.expiry?.at) detail.push(`Programmes run until ${new Date(row.expiry.at).toLocaleString()}`);
+  pill.title = detail.join(' · ') || 'Open Publish → Health & guides';
 }
 
 async function checkAllGuides({ quiet = false } = {}) {
   el.allGuidesBtn.disabled = true;
   if (!quiet) el.allGuidesStatus.textContent = 'Checking every published slug…';
   try {
-    const report = await api('/api/health/epg');
+    const slug = el.publishSlug.value.trim();
+    const report = await api(`/api/health/epg${slug ? `?slug=${encodeURIComponent(slug)}` : ''}`);
     renderGuidesTable(report);
+    renderGuideStatus(report.slugs.find((row) => row.slug) || null, slug);
     el.allGuidesStatus.textContent = `${report.count} published slug(s) — overall ${HEALTH_LABELS[report.status] || report.status}.`;
     if (!quiet) {
       if (report.status === 'healthy') toast('Every published guide is fresh and has current programmes.', 'success');
@@ -1864,6 +1890,7 @@ el.resumeBtn.addEventListener('click', () => {
   if (saved) {
     restoreState(saved);
     applyLoadedState();
+    checkAllGuides({ quiet: true }).catch(() => {});
   }
   el.resumeBanner.hidden = true;
 });
@@ -2009,7 +2036,10 @@ el.publishBtn.addEventListener('click', () => {
 // Persist the slug as soon as it's set, not only after a successful
 // publish — otherwise a session saved before ever clicking Publish (or
 // before this field existed) never carries a slug to restore.
-el.publishSlug.addEventListener('blur', () => autosave());
+el.publishSlug.addEventListener('blur', () => {
+  autosave();
+  checkAllGuides({ quiet: true }).catch(() => {});
+});
 
 el.copyM3uUrlBtn.addEventListener('click', () => copyToClipboard(el.publishM3uUrl.value));
 el.copyXmlUrlBtn.addEventListener('click', () => copyToClipboard(el.publishXmlUrl.value));

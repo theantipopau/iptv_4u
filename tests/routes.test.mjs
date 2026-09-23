@@ -37,6 +37,13 @@ after(() => {
   try { fs.rmSync(hostedDir, { recursive: true, force: true }); } catch { /* best effort */ }
 });
 
+// The public all-slugs report masks slug names; find a row by the id the
+// per-slug endpoint (which requires knowing the slug) hands back.
+async function rowFor(report, slug) {
+  const { id } = await (await fetch(`${baseUrl}/api/health/epg/${slug}`)).json();
+  return report.slugs.find((row) => row.id === id);
+}
+
 async function publish(body) {
   const response = await fetch(`${baseUrl}/api/publish`, {
     method: 'POST',
@@ -171,12 +178,14 @@ describe('published file routes', () => {
     // Every dashboard column is present for every slug, including the one the
     // incident was about: published, fresh, and renewing from nowhere.
     for (const row of body.slugs) {
-      assert.equal(typeof row.slug, 'string');
+      assert.equal(row.slug, null, 'slug names are not listed publicly');
+      assert.match(row.id, /^[0-9a-f]{12}$/);
       assert.ok('status' in row && 'refresh' in row && 'guideAgeMs' in row && 'currentOrFutureProgrammes' in row);
       assert.equal(typeof row.refresh.enabled, 'boolean');
     }
 
-    const serving = body.slugs.find((row) => row.slug === 'serving');
+    assert.equal(JSON.stringify(body).includes('serving'), false, 'no slug name anywhere in the public report');
+    const serving = await rowFor(body, 'serving');
     assert.equal(serving.published, true);
     assert.equal(serving.refresh.configured, false);
     assert.equal(serving.refresh.enabled, false);
@@ -195,7 +204,7 @@ describe('published file routes', () => {
     assert.equal(save.status, 200);
 
     const body = await (await fetch(`${baseUrl}/api/health/epg`)).json();
-    const row = body.slugs.find((entry) => entry.slug === 'serving');
+    const row = await rowFor(body, 'serving');
     assert.equal(row.refresh.configured, true);
     assert.equal(row.refresh.enabled, true);
     assert.equal(row.refresh.intervalKey, '24h');
@@ -231,7 +240,7 @@ describe('published file routes', () => {
     assert.equal(new Date(health.refresh.nextRunAt).getUTCMinutes(), 0, 'on the hour');
 
     const report = await (await fetch(`${baseUrl}/api/health/epg`)).json();
-    const row = report.slugs.find((entry) => entry.slug === 'serving');
+    const row = await rowFor(report, 'serving');
     assert.equal(row.renewal, 'auto');
     assert.equal(row.status, 'healthy');
   });
@@ -255,7 +264,7 @@ describe('published file routes', () => {
       body: JSON.stringify({ slug: 'serving', m3uUrl: 'http://example.invalid/list.m3u', intervalKey: null })
     });
     const body = await (await fetch(`${baseUrl}/api/health/epg`)).json();
-    const row = body.slugs.find((entry) => entry.slug === 'serving');
+    const row = await rowFor(body, 'serving');
     assert.equal(row.refresh.configured, true);
     assert.equal(row.refresh.paused, true);
     assert.ok(row.warnings.some((warning) => warning.code === 'AUTO_REFRESH_PAUSED'));
@@ -295,7 +304,7 @@ describe('published file routes', () => {
     assert.equal(after.warnings.some((w) => w.includes('Nothing is scheduled to renew')), false);
 
     const report = await (await fetch(`${baseUrl}/api/health/epg`)).json();
-    const row = report.slugs.find((entry) => entry.slug === 'first-timer');
+    const row = await rowFor(report, 'first-timer');
     assert.equal(row.renewal, 'auto');
     assert.equal(row.attentionRank, 4);
   });

@@ -26,7 +26,9 @@ import {
   uploadLogoAsset,
   getLogoAsset,
   assessPublishedHealth,
-  assessAllPublishedHealth
+  publicHealthReport,
+  buildPublication,
+  publicSlugId
 } from './shared/epg-service.js';
 import { buildHostedResponse } from './shared/serve.js';
 import { createKvCache, createHostedKvStore } from './shared/kv-cache.js';
@@ -110,6 +112,10 @@ export default {
         return ok(await exportM3u(await readJson(request)));
       }
 
+      if (pathname === '/api/build-from-plan' && request.method === 'POST') {
+        return ok(await buildPublication(cache, await resolveTmdbApiKey(env), await readJson(request)));
+      }
+
       if (pathname === '/api/publish' && request.method === 'POST') {
         const body = await readJson(request);
         return ok(await publishFiles(hostedStore, body.slug, body));
@@ -151,12 +157,13 @@ export default {
       }
 
       if (pathname === '/api/health/epg' && request.method === 'GET') {
-        return ok(await assessAllPublishedHealth(hostedStore));
+        return ok(await publicHealthReport(hostedStore, { reveal: url.searchParams.get('slug') }));
       }
 
       const healthMatch = pathname.match(/^\/api\/health\/epg\/([^/]+)$/);
       if (healthMatch && request.method === 'GET') {
-        return ok(await assessPublishedHealth(hostedStore, decodeURIComponent(healthMatch[1])));
+        const slug = decodeURIComponent(healthMatch[1]);
+        return ok({ ...(await assessPublishedHealth(hostedStore, slug)), id: await publicSlugId(hostedStore, slug) });
       }
 
       if (pathname === '/api/upload-logo' && request.method === 'POST') {

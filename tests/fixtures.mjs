@@ -103,6 +103,9 @@ export function memoryStore(seed = {}) {
       if (Date.now() - entry.updatedAt > maxAgeMs) return null;
       return entry.data;
     },
+    async listNames(prefix) {
+      return [...entries.keys()].filter((name) => name.startsWith(prefix));
+    },
     async remove(name) {
       entries.delete(name);
     },

@@ -132,12 +132,26 @@ export function createKvCache(kv, options = {}) {
     }
   }
 
+  // Key names only — no value reads. Listing with values costs a read (and a
+  // parse) of every stored guide, several MB each.
+  async function listNames(prefix) {
+    requireBinding();
+    const names = [];
+    let cursor;
+    do {
+      const page = await kv.list({ prefix, cursor });
+      for (const entry of page.keys || []) names.push(entry.name);
+      cursor = page.list_complete ? undefined : page.cursor;
+    } while (cursor);
+    return names;
+  }
+
   async function remove(name) {
     requireBinding();
     await kv.delete(name);
   }
 
-  return { get, getStale, getEntry, set, list, remove };
+  return { get, getStale, getEntry, set, list, listNames, remove };
 }
 
 /**

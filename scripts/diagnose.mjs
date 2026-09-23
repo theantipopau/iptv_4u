@@ -254,7 +254,7 @@ async function auditAll(args) {
     } else {
       const header = ['SLUG', 'STATUS', 'EXPIRY', 'CURRENT/FUTURE', 'REFRESH'];
       const rows = report.slugs.map((row) => [
-        row.slug,
+        row.slug || `#${row.id}`,
         row.status,
         expiryLabel(row.expiry),
         row.currentOrFutureProgrammes == null ? '?' : `${row.currentOrFutureProgrammes} of ${row.programmes ?? '?'}`,
