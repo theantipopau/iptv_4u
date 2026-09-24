@@ -184,3 +184,44 @@ describe('public health report redaction', () => {
     assert.ok(text.includes('https://host.example/…'));
   });
 });
+
+describe('24/7 channels get a generated schedule', () => {
+  const M3U_247 = [
+    '#EXTM3U',
+    '#EXTINF:-1 tvg-id="24/7 Seinfeld S07 [VIP]" tvg-logo="http://example.invalid/s.png" group-title="24/7 Streams",24/7 Seinfeld S07 [VIP]',
+    'http://example.invalid/a.m3u8',
+    '#EXTINF:-1 group-title="24/7 Streams",24/7 Iron Man [VIP]',
+    'http://example.invalid/b.m3u8',
+    '#EXTINF:-1 tvg-id="real.247" group-title="News",News 24/7',
+    'http://example.invalid/c.m3u8',
+    ''
+  ].join('\n');
+
+  test('fills 24/7 channels without programmes, and never overrides a real guide', async () => {
+    const { analyzeGuide } = await import('../shared/validate.js');
+    const now = Date.parse('2026-09-24T10:30:00Z');
+    const realGuide = buildGuide({ ids: ['real.247'], programmesPerChannel: 6, now });
+    const plan = {
+      '24/7 Seinfeld S07 [VIP]': { channelId: null },
+      'News 24/7': { channelId: 'real.247', channelName: 'News', guideUrl: dataUrl('text/xml', realGuide), canMergeGuide: true, logoUrl: null, tmdb: null, synthesize: false }
+    };
+    const { buildFromPlan } = await import('../shared/epg-service.js');
+    const { parseM3U } = await import('../shared/core.js');
+    const result = await buildFromPlan(memoryStore(), '', { channels: parseM3U(M3U_247), plan, now });
+
+    assert.equal(result.counts.synthesizedCount, 2, 'Seinfeld and Iron Man, not the channel with a real guide');
+    assert.match(result.xml, /<title lang="en">Seinfeld Season 7<\/title>/);
+    assert.match(result.xml, /<icon src="http:\/\/example\.invalid\/s\.png"/);
+    assert.match(result.m3u, /tvg-id="247\.[^"]*iron-man[^"]*"/, 'a channel with no id is given one in the playlist too');
+    assert.equal((result.xml.match(/channel="real\.247"/g) || []).length, 6, 'the real guide is untouched');
+
+    const blocks = (result.xml.match(/channel="24\/7 Seinfeld S07 \[VIP\]"/g) || []).length;
+    assert.ok(blocks >= 32 && blocks <= 34, `about four days of 3-hour blocks, got ${blocks}`);
+
+    // Freshness follows the real schedule, not the generated one.
+    const analysis = analyzeGuide(result.xml, { now });
+    const realStop = Date.parse(analyzeGuide(realGuide, { now }).latestStop);
+    assert.equal(Date.parse(analysis.latestStop), realStop);
+    assert.equal(analysis.synthesizedProgrammes, blocks * 2);
+  });
+});

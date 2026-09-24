@@ -26,6 +26,7 @@ import {
   extractCountryHint,
   detectTwentyFourSeven,
   cleanTitleForLookup,
+  twentyFourSevenTitle,
   buildLogoMap,
   searchIptvApi,
   matchAliasRegistry,
@@ -1468,7 +1469,7 @@ async function readRefreshSourcePlaylist(hostedStore, url, selfHosts) {
  * within a Worker's CPU and memory limits when no search is needed. Shared by
  * Publish and the scheduled refresh, so both produce the same files.
  */
-export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, plan = {}, customGuideUrl = '', searchAll = false, baseXml = null }) {
+export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, plan = {}, customGuideUrl = '', searchAll = false, baseXml = null, now = Date.now() }) {
   const usePlan = Object.keys(plan).length > 0 && !searchAll;
   const links = [];
   let guideCount = 0;
@@ -1528,6 +1529,27 @@ export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, p
       failedCount += 1;
     }
   });
+
+  // 24/7 channels (a film or show on a loop) have no real schedule anywhere.
+  // Any that end up without programmes get a generated one below; one with no
+  // id at all is given one here, so the playlist and guide can be joined.
+  const twentyFourSeven = [];
+  for (const channel of channels) {
+    if (!detectTwentyFourSeven(channel.name, channel.attrs?.['group-title'] || '')) continue;
+    let link = links.find((candidate) => candidate.channelIndex === channel.index) || null;
+    const tvgId = String(channel.attrs?.['tvg-id'] || '').trim();
+    if (!link?.channelId && !tvgId) {
+      link = {
+        channelIndex: channel.index,
+        channelId: `247.${slugify(channel.name) || channel.index}`,
+        channelName: twentyFourSevenTitle(channel.name),
+        logoUrl: channel.attrs?.['tvg-logo'] || null,
+        canMergeGuide: false
+      };
+      links.push(link);
+    }
+    twentyFourSeven.push({ channel, link, channelId: link?.channelId || tvgId });
+  }
 
   const { m3u } = await exportM3u({ channels, links });
 
@@ -1595,29 +1617,61 @@ export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, p
 
     if (link.synthesize) {
       base.programme = base.programme.filter((p) => p['@_channel'] !== link.channelId);
-      const startDate = new Date();
-      startDate.setUTCHours(0, 0, 0, 0);
-      for (let i = 0; i < 3; i += 1) {
-        const start = new Date(startDate.getTime() + i * 86400000);
-        const stop = new Date(start.getTime() + 86400000);
-        const programme = {
-          '@_channel': link.channelId,
-          '@_start': formatXmltvDate(start),
-          '@_stop': formatXmltvDate(stop),
-          title: [{ '#text': link.tmdb?.title || link.channelName || link.channelId, '@_lang': 'en' }],
-          category: [{ '#text': '24/7', '@_lang': 'en' }]
-        };
-        if (link.tmdb?.overview) programme.desc = [{ '#text': link.tmdb.overview, '@_lang': 'en' }];
-        base.programme.push(programme);
-      }
+      base.programme.push(...synthesizeSchedule(link.channelId, {
+        title: link.tmdb?.title || link.channelName || link.channelId,
+        description: link.tmdb?.overview || null
+      }, now));
     }
+  }
+
+  let synthesizedCount = 0;
+  const withProgrammes = new Set(base.programme.map((programme) => programme['@_channel']));
+  for (const { channel, link, channelId } of twentyFourSeven) {
+    if (!channelId || withProgrammes.has(channelId)) continue;
+    const title = link?.tmdb?.title || twentyFourSevenTitle(channel.name);
+    let channelNode = base.channel.find((node) => node['@_id'] === channelId);
+    if (!channelNode) {
+      channelNode = { '@_id': channelId, 'display-name': [channel.name] };
+      base.channel.push(channelNode);
+    }
+    const logoUrl = link?.logoUrl || link?.tmdb?.posterUrl || channel.attrs?.['tvg-logo'] || null;
+    if (logoUrl && !channelNode.icon) channelNode.icon = { '@_src': logoUrl };
+    base.programme.push(...synthesizeSchedule(channelId, { title, description: link?.tmdb?.overview || null }, now));
+    withProgrammes.add(channelId);
+    synthesizedCount += 1;
   }
 
   return {
     m3u,
     xml: buildXmlTv(base),
-    counts: { guideCount, logoCount, failedCount, overrideCount, planCount, unplannedCount }
+    counts: { guideCount, logoCount, failedCount, overrideCount, planCount, unplannedCount, synthesizedCount }
   };
+}
+
+const SYNTH_BLOCK_MS = 3 * 60 * 60 * 1000;
+const SYNTH_AHEAD_MS = 4 * 24 * 60 * 60 * 1000;
+
+/**
+ * A placeholder schedule for a channel with no real one: back-to-back 3-hour
+ * blocks from the current block to four days ahead, tagged "24/7" so players
+ * and this app can tell it's generated (and so it isn't counted as real
+ * schedule when judging freshness). Regenerated on every renewal.
+ */
+function synthesizeSchedule(channelId, { title, description }, now) {
+  const programmes = [];
+  const first = Math.floor(now / SYNTH_BLOCK_MS) * SYNTH_BLOCK_MS;
+  const desc = description || `${title}, playing around the clock. This channel has no published schedule, so this guide entry is generated.`;
+  for (let start = first; start < now + SYNTH_AHEAD_MS; start += SYNTH_BLOCK_MS) {
+    programmes.push({
+      '@_channel': channelId,
+      '@_start': formatXmltvDate(new Date(start)),
+      '@_stop': formatXmltvDate(new Date(start + SYNTH_BLOCK_MS)),
+      title: [{ '#text': title, '@_lang': 'en' }],
+      desc: [{ '#text': desc, '@_lang': 'en' }],
+      category: [{ '#text': '24/7', '@_lang': 'en' }]
+    });
+  }
+  return programmes;
 }
 
 export async function runAutoRefresh(cache, hostedStore, apiKey, config, options = {}) {

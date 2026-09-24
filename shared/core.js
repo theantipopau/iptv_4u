@@ -441,6 +441,23 @@ export function cleanTitleForLookup(name) {
   return s;
 }
 
+/**
+ * A readable programme title for a 24/7 channel: "24/7 Seinfeld S07 [VIP]"
+ * becomes "Seinfeld Season 7". Unlike cleanTitleForLookup, season markers are
+ * kept — they're useful to a viewer, just not to a search.
+ */
+export function twentyFourSevenTitle(name) {
+  let s = String(name || '');
+  s = s.replace(/[([][^)\]]*[)\]]/g, ' ');
+  s = s.replace(TWENTY_FOUR_SEVEN_REPLACE_RE, ' ');
+  s = s.replace(/\b(FHD|UHD|HD|SD|4K|HEVC|H265|H264|VIP)\b/gi, ' ');
+  s = s.replace(/^[A-Za-z]{2,3}\s*[:|-]\s*/, ' ');
+  s = s.replace(/[|_]/g, ' ');
+  s = s.replace(/\bS0*(\d{1,2})\b/gi, 'Season $1');
+  s = s.replace(/\s+/g, ' ').trim();
+  return s || String(name || '').trim();
+}
+
 // ---- logos ------------------------------------------------------------
 
 export function buildLogoMap(logos) {

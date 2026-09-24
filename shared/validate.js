@@ -175,6 +175,10 @@ export function analyzePlaylist(m3uContent) {
  * @param {{now?: number}} [options]
  * @returns {GuideAnalysis}
  */
+function isSynthesizedProgramme(programme) {
+  return arrify(programme.category).some((category) => (typeof category === 'string' ? category : category?.['#text']) === '24/7');
+}
+
 export function analyzeGuide(xmlContent, options = {}) {
   const now = options.now ?? Date.now();
   const text = String(xmlContent || '');
@@ -248,6 +252,8 @@ export function analyzeGuide(xmlContent, options = {}) {
   const withProgrammes = new Set();
   let earliest = Infinity;
   let latest = -Infinity;
+  let realLatest = -Infinity;
+  let synthesized = 0;
 
   for (const programme of arrify(parsed.programmes)) {
     const channelId = String(programme['@_channel'] || '').trim();
@@ -265,6 +271,8 @@ export function analyzeGuide(xmlContent, options = {}) {
     else analysis.currentOrFutureProgrammes += 1;
     if (start < earliest) earliest = start;
     if (stop > latest) latest = stop;
+    if (isSynthesizedProgramme(programme)) synthesized += 1;
+    else if (stop > realLatest) realLatest = stop;
   }
 
   analysis.programmeCount = refs.length;
@@ -273,7 +281,10 @@ export function analyzeGuide(xmlContent, options = {}) {
   analysis.channelsWithoutProgrammes = [...declared].filter((id) => !withProgrammes.has(id)).length;
   analysis.idsWithProgrammes = [...declared].filter((id) => withProgrammes.has(id)).length;
   analysis.earliestStart = isoOrNull(earliest);
-  analysis.latestStop = isoOrNull(latest);
+  // Generated 24/7 placeholder schedules always run days ahead; counting them
+  // would make a guide whose real schedule is about to run out look healthy.
+  analysis.synthesizedProgrammes = synthesized;
+  analysis.latestStop = isoOrNull(realLatest > -Infinity ? realLatest : latest);
 
   if (analysis.channelCount === 0) {
     errors.push({ code: 'GUIDE_NO_CHANNELS', message: 'The guide declares no <channel> entries.' });
