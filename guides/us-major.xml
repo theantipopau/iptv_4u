@@ -1,34 +1,108 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <tv generator-info-name="epgshare01 US (trimmed to major national cable channels)">
+  <channel id="Bravo.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s58625_ll_h15_ab.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s58625_ll_h15_ab.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">Bravo HD</display-name>
+  </channel>
+  <channel id="Disney.Junior.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s74885_ll_h15_ac.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s74885_ll_h15_ac.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">Disney Junior HD</display-name>
+  </channel>
+  <channel id="Disney.Channel.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s59684_ll_h15_ae.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s59684_ll_h15_ae.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">Disney Channel HD</display-name>
+  </channel>
+  <channel id="History.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s57708_ll_h15_ad.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s57708_ll_h15_ad.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">History HD</display-name>
+  </channel>
+  <channel id="Paramount.Network.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s59186_ll_h15_ac.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s59186_ll_h15_ac.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">Paramount Network HD</display-name>
+  </channel>
+  <channel id="Comedy.Central.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s62420_ll_h15_ab.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s62420_ll_h15_ab.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">Comedy Central HD</display-name>
+  </channel>
+  <channel id="Fox.Deportes.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s15377_ll_h15_ab.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s15377_ll_h15_ab.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">Fox Deportes HD</display-name>
+  </channel>
+  <channel id="Fox.News.Channel.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s60179_ll_h15_ab.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s60179_ll_h15_ab.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">Fox News Channel HD</display-name>
+  </channel>
   <channel id="FX.HD.us2">
     <icon src="http://dtil.tmsimg.com/assets/s58574_ll_h15_aa.png?w=360&amp;h=270"/>
     <icon src="http://dtil.tmsimg.com/assets/s58574_ll_h15_aa.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
     <display-name lang="en">FX HD</display-name>
   </channel>
-  <channel id="CNN.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s58646_ll_h15_ac.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s58646_ll_h15_ac.png?w=360&amp;h=270"/>
+  <channel id="TNT.HD.us2">
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">CNN HD</display-name>
+    <display-name lang="en">TNT HD</display-name>
   </channel>
-  <channel id="FXX.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s66379_ll_h9_aa.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s66379_ll_h9_aa.png?w=360&amp;h=270"/>
+  <channel id="Disney.XD.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s60006_ll_h15_aa.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s60006_ll_h15_aa.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">FXX HD</display-name>
-  </channel>
-  <channel id="truTV.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s64490_ll_h15_ac.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s64490_ll_h15_ac.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">truTV HD</display-name>
+    <display-name lang="en">Disney XD HD</display-name>
   </channel>
   <channel id="ESPNEWS.HD.us2">
     <icon src="http://dtil.tmsimg.com/assets/s59976_ll_h15_aa.png?w=360&amp;h=270"/>
     <icon src="http://dtil.tmsimg.com/assets/s59976_ll_h15_aa.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
     <display-name lang="en">ESPNEWS HD</display-name>
+  </channel>
+  <channel id="Lifetime.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s60150_ll_h15_ad.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s60150_ll_h15_ad.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">Lifetime HD</display-name>
+  </channel>
+  <channel id="TBS.HD.us2">
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">TBS HD</display-name>
+  </channel>
+  <channel id="Hallmark.Channel.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s66268_ll_h15_ab.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s66268_ll_h15_ab.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">Hallmark Channel HD</display-name>
+  </channel>
+  <channel id="Cartoon.Network.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s60048_ll_h15_ac.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s60048_ll_h15_ac.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">Cartoon Network HD</display-name>
+  </channel>
+  <channel id="Nickelodeon.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s59432_ll_h15_ac.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s59432_ll_h15_ac.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">Nickelodeon HD</display-name>
+  </channel>
+  <channel id="MTV.-.Music.Television.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s60964_ll_h15_aa.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s60964_ll_h15_aa.png?w=360&amp;h=270"/>
+    <url>http://www.tmsapi.com</url>
+    <display-name lang="en">MTV - Music Television HD</display-name>
   </channel>
   <channel id="AMC.HD.us2">
     <icon src="http://dtil.tmsimg.com/assets/s59337_ll_h15_ab.png?w=360&amp;h=270"/>
@@ -42,39 +116,29 @@
     <url>http://www.tmsapi.com</url>
     <display-name lang="en">Investigation Discovery HD</display-name>
   </channel>
-  <channel id="TNT.HD.us2">
+  <channel id="Fox.Business.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s58718_ll_h15_ac.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s58718_ll_h15_ac.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">TNT HD</display-name>
+    <display-name lang="en">Fox Business HD</display-name>
   </channel>
-  <channel id="History.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s57708_ll_h15_ad.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s57708_ll_h15_ad.png?w=360&amp;h=270"/>
+  <channel id="CNN.International.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s10146_ll_h15_ac.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s10146_ll_h15_ac.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">History HD</display-name>
+    <display-name lang="en">CNN International</display-name>
   </channel>
-  <channel id="Nickelodeon.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s59432_ll_h15_ac.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s59432_ll_h15_ac.png?w=360&amp;h=270"/>
+  <channel id="National.Geographic.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s49438_ll_h15_ab.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s49438_ll_h15_ab.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Nickelodeon HD</display-name>
+    <display-name lang="en">National Geographic HD</display-name>
   </channel>
-  <channel id="Disney.XD.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s60006_ll_h15_aa.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s60006_ll_h15_aa.png?w=360&amp;h=270"/>
+  <channel id="BET.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s63236_ll_h15_ac.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s63236_ll_h15_ac.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Disney XD HD</display-name>
-  </channel>
-  <channel id="Lifetime.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s60150_ll_h15_ad.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s60150_ll_h15_ad.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Lifetime HD</display-name>
-  </channel>
-  <channel id="ESPN.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s32645_ll_h15_ab.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s32645_ll_h15_ab.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">ESPN HD</display-name>
+    <display-name lang="en">BET HD</display-name>
   </channel>
   <channel id="VH1.HD.us2">
     <icon src="http://dtil.tmsimg.com/assets/s60046_ll_h15_aa.png?w=360&amp;h=270"/>
@@ -88,45 +152,17 @@
     <url>http://www.tmsapi.com</url>
     <display-name lang="en">ESPN Deportes HD</display-name>
   </channel>
-  <channel id="CNN.International.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s10146_ll_h15_ac.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s10146_ll_h15_ac.png?w=360&amp;h=270"/>
+  <channel id="FXX.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s66379_ll_h9_aa.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s66379_ll_h9_aa.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">CNN International</display-name>
+    <display-name lang="en">FXX HD</display-name>
   </channel>
-  <channel id="BET.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s63236_ll_h15_ac.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s63236_ll_h15_ac.png?w=360&amp;h=270"/>
+  <channel id="Discovery.Channel.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s56905_ll_h15_ad.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s56905_ll_h15_ad.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">BET HD</display-name>
-  </channel>
-  <channel id="MSNBC.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/GNLZZGG002H5PTL.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/GNLZZGG002H5PTL.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">MSNBC HD</display-name>
-  </channel>
-  <channel id="TBS.HD.us2">
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">TBS HD</display-name>
-  </channel>
-  <channel id="Fox.Deportes.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s15377_ll_h15_ab.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s15377_ll_h15_ab.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Fox Deportes HD</display-name>
-  </channel>
-  <channel id="ESPNU.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s60696_ll_h15_aa.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s60696_ll_h15_aa.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">ESPNU HD</display-name>
-  </channel>
-  <channel id="Cartoon.Network.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s60048_ll_h15_ac.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s60048_ll_h15_ac.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Cartoon Network HD</display-name>
+    <display-name lang="en">Discovery Channel HD</display-name>
   </channel>
   <channel id="Fox.Soccer.Plus.HD.us2">
     <icon src="http://dtil.tmsimg.com/assets/s66880_ll_h15_aa.png?w=360&amp;h=270"/>
@@ -134,35 +170,23 @@
     <url>http://www.tmsapi.com</url>
     <display-name lang="en">Fox Soccer Plus HD</display-name>
   </channel>
-  <channel id="National.Geographic.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s49438_ll_h15_ab.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s49438_ll_h15_ab.png?w=360&amp;h=270"/>
+  <channel id="ESPNU.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s60696_ll_h15_aa.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s60696_ll_h15_aa.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">National Geographic HD</display-name>
+    <display-name lang="en">ESPNU HD</display-name>
   </channel>
-  <channel id="Syfy.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s58623_ll_h15_ae.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s58623_ll_h15_ae.png?w=360&amp;h=270"/>
+  <channel id="USA.Network.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s58452_ll_h15_af.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s58452_ll_h15_af.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Syfy HD</display-name>
+    <display-name lang="en">USA Network HD</display-name>
   </channel>
-  <channel id="MTV.-.Music.Television.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s60964_ll_h15_aa.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s60964_ll_h15_aa.png?w=360&amp;h=270"/>
+  <channel id="truTV.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s64490_ll_h15_ac.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s64490_ll_h15_ac.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">MTV - Music Television HD</display-name>
-  </channel>
-  <channel id="Fox.News.Channel.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s60179_ll_h15_ab.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s60179_ll_h15_ab.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Fox News Channel HD</display-name>
-  </channel>
-  <channel id="Discovery.Channel.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s56905_ll_h15_ad.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s56905_ll_h15_ad.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Discovery Channel HD</display-name>
+    <display-name lang="en">truTV HD</display-name>
   </channel>
   <channel id="TLC.HD.(US).us2">
     <icon src="http://dtil.tmsimg.com/assets/s57391_ll_h15_ad.png?w=360&amp;h=270"/>
@@ -176,53 +200,29 @@
     <url>http://www.tmsapi.com</url>
     <display-name lang="en">ESPN2 HD</display-name>
   </channel>
-  <channel id="Disney.Junior.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s74885_ll_h15_ac.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s74885_ll_h15_ac.png?w=360&amp;h=270"/>
+  <channel id="MSNBC.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/GNLZZGG002H5PTL.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/GNLZZGG002H5PTL.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Disney Junior HD</display-name>
+    <display-name lang="en">MSNBC HD</display-name>
   </channel>
-  <channel id="Hallmark.Channel.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s66268_ll_h15_ab.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s66268_ll_h15_ab.png?w=360&amp;h=270"/>
+  <channel id="Syfy.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s58623_ll_h15_ae.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s58623_ll_h15_ae.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Hallmark Channel HD</display-name>
+    <display-name lang="en">Syfy HD</display-name>
   </channel>
-  <channel id="Fox.Business.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s58718_ll_h15_ac.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s58718_ll_h15_ac.png?w=360&amp;h=270"/>
+  <channel id="ESPN.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s32645_ll_h15_ab.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s32645_ll_h15_ab.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Fox Business HD</display-name>
+    <display-name lang="en">ESPN HD</display-name>
   </channel>
-  <channel id="Comedy.Central.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s62420_ll_h15_ab.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s62420_ll_h15_ab.png?w=360&amp;h=270"/>
+  <channel id="CNN.HD.us2">
+    <icon src="http://dtil.tmsimg.com/assets/s58646_ll_h15_ac.png?w=360&amp;h=270"/>
+    <icon src="http://dtil.tmsimg.com/assets/s58646_ll_h15_ac.png?w=360&amp;h=270"/>
     <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Comedy Central HD</display-name>
-  </channel>
-  <channel id="Disney.Channel.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s59684_ll_h15_ae.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s59684_ll_h15_ae.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Disney Channel HD</display-name>
-  </channel>
-  <channel id="USA.Network.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s58452_ll_h15_af.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s58452_ll_h15_af.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">USA Network HD</display-name>
-  </channel>
-  <channel id="Bravo.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s58625_ll_h15_ab.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s58625_ll_h15_ab.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Bravo HD</display-name>
-  </channel>
-  <channel id="Paramount.Network.HD.us2">
-    <icon src="http://dtil.tmsimg.com/assets/s59186_ll_h15_ac.png?w=360&amp;h=270"/>
-    <icon src="http://dtil.tmsimg.com/assets/s59186_ll_h15_ac.png?w=360&amp;h=270"/>
-    <url>http://www.tmsapi.com</url>
-    <display-name lang="en">Paramount Network HD</display-name>
+    <display-name lang="en">CNN HD</display-name>
   </channel>
   <programme channel="MSNBC.HD.us2" start="20260921050000 +0000" stop="20260921060000 +0000">
     <title lang="en">Dateline</title>
