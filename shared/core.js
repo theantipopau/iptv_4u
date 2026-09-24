@@ -455,7 +455,50 @@ export function twentyFourSevenTitle(name) {
   s = s.replace(/[|_]/g, ' ');
   s = s.replace(/\bS0*(\d{1,2})\b/gi, 'Season $1');
   s = s.replace(/\s+/g, ' ').trim();
-  return s || String(name || '').trim();
+  if (!s) return String(name || '').trim();
+
+  const seasonMatch = s.match(/^(.*?)( Season \d+)$/);
+  const show = seasonMatch ? seasonMatch[1] : s;
+  const season = seasonMatch ? seasonMatch[2] : '';
+  const fixed = TWENTY_FOUR_SEVEN_FIXES[titleKey(show)];
+  return `${fixed ? fixed.title : titleCaseShouting(show)}${season}`;
+}
+
+/** A curated description for a 24/7 channel, when one is known. */
+export function twentyFourSevenDescription(name) {
+  const title = twentyFourSevenTitle(name).replace(/ Season \d+$/, '');
+  return Object.values(TWENTY_FOUR_SEVEN_FIXES).find((fix) => fix.title === title)?.description || null;
+}
+
+const titleKey = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Provider channel names carry typos and odd spacing; these are the readable
+// titles (and, for film series, what's actually playing). Keyed by the
+// cleaned name with everything but letters and digits removed.
+const TWENTY_FOUR_SEVEN_FIXES = {
+  harrypoter: { title: 'Harry Potter', description: 'The Harry Potter films on repeat, around the clock.' },
+  harrypotter: { title: 'Harry Potter', description: 'The Harry Potter films on repeat, around the clock.' },
+  thehobbitandlordoftherings: { title: 'The Lord of the Rings & The Hobbit', description: 'The Lord of the Rings and The Hobbit films on repeat, around the clock.' },
+  bobsburgers: { title: 'Bob’s Burgers' },
+  oceanseleven: { title: 'Ocean’s Eleven' },
+  itsalwayssunnyinphiladelphia: { title: 'It’s Always Sunny in Philadelphia' },
+  spiderman: { title: 'Spider-Man' },
+  wreckitralph: { title: 'Wreck-It Ralph' },
+  cosmosaspacetimeodyssey: { title: 'Cosmos: A Spacetime Odyssey' },
+  missionimpossible: { title: 'Mission: Impossible' },
+  theblueplanet2001: { title: 'The Blue Planet' },
+  thebourne: { title: 'The Bourne Films' }
+};
+
+const ROMAN_NUMERAL = /^(?=[IVXLC]+$)C{0,3}(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/;
+
+// "LAW & ORDER" -> "Law & Order"; roman numerals ("Planet Earth II") and
+// numbers are left alone.
+function titleCaseShouting(text) {
+  return text.split(' ').map((word) => {
+    if (word.length < 2 || word !== word.toUpperCase() || !/[A-Z]/.test(word) || ROMAN_NUMERAL.test(word)) return word;
+    return word.charAt(0) + word.slice(1).toLowerCase();
+  }).join(' ');
 }
 
 // ---- logos ------------------------------------------------------------

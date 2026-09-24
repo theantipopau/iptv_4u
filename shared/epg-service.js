@@ -27,6 +27,7 @@ import {
   detectTwentyFourSeven,
   cleanTitleForLookup,
   twentyFourSevenTitle,
+  twentyFourSevenDescription,
   buildLogoMap,
   searchIptvApi,
   matchAliasRegistry,
@@ -1636,7 +1637,7 @@ export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, p
     }
     const logoUrl = link?.logoUrl || link?.tmdb?.posterUrl || channel.attrs?.['tvg-logo'] || null;
     if (logoUrl && !channelNode.icon) channelNode.icon = { '@_src': logoUrl };
-    base.programme.push(...synthesizeSchedule(channelId, { title, description: link?.tmdb?.overview || null }, now));
+    base.programme.push(...synthesizeSchedule(channelId, { title, description: link?.tmdb?.overview || twentyFourSevenDescription(channel.name) }, now));
     withProgrammes.add(channelId);
     synthesizedCount += 1;
   }

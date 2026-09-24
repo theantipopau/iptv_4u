@@ -225,3 +225,17 @@ describe('24/7 channels get a generated schedule', () => {
     assert.equal(analysis.synthesizedProgrammes, blocks * 2);
   });
 });
+
+describe('24/7 titles', () => {
+  test('known film series and provider typos get readable titles', async () => {
+    const { twentyFourSevenTitle, twentyFourSevenDescription } = await import('../shared/core.js');
+    assert.equal(twentyFourSevenTitle('24/7 Harry Poter [VIP]'), 'Harry Potter');
+    assert.match(twentyFourSevenDescription('24/7 Harry Poter [VIP]'), /Harry Potter films on repeat/);
+    assert.equal(twentyFourSevenTitle('24/7 The Hobbit And Lord Of TheRings [VIP]'), 'The Lord of the Rings & The Hobbit');
+    assert.match(twentyFourSevenDescription('24/7 The Hobbit And Lord Of TheRings [VIP]'), /Lord of the Rings and The Hobbit films/);
+    assert.equal(twentyFourSevenTitle('24/7 Bobs Burgers S11 [VIP]'), 'Bob’s Burgers Season 11');
+    assert.equal(twentyFourSevenTitle('24/7 LAW & ORDER'), 'Law & Order');
+    assert.equal(twentyFourSevenTitle('24/7 Planet Earth II [VIP]'), 'Planet Earth II');
+    assert.equal(twentyFourSevenDescription('24/7 Iron Man [VIP]'), null);
+  });
+});
