@@ -93,8 +93,8 @@
           <div class="controls-grid">
             <button id="discoverBtn" class="btn">Discover IPTV-org sources</button>
             <label class="inline-field">
-              <span>Max scan</span>
-              <input id="maxSources" type="number" min="10" max="40" value="40" />
+              <span>Sources per search</span>
+              <input id="maxSources" type="number" min="10" max="40" value="40" title="How many guide sources each channel search checks (10 to 40)" />
             </label>
           </div>
           <div class="inline-status" id="sourceStatus">Not discovered yet</div>
@@ -159,12 +159,12 @@
             <span class="step-num">4</span>
             <div>
               <h2>Export</h2>
-              <p class="card-sub">Download the linked files to use anywhere.</p>
+              <p class="card-sub">Save copies to this computer. For a link your player keeps using, publish in step 5 instead.</p>
             </div>
           </div>
           <div class="controls-grid">
-            <button id="exportM3UBtn" class="btn">Download M3U</button>
-            <button id="exportXMLBtn" class="btn primary">Download XMLTV</button>
+            <button id="exportM3UBtn" class="btn">Download M3U file</button>
+            <button id="exportXMLBtn" class="btn primary">Download XMLTV file</button>
           </div>
           <div id="mergeStatus" class="inline-status"></div>
         </section>
@@ -213,7 +213,7 @@
               <span>URL slug</span>
               <input id="publishSlug" type="text" placeholder="matt" autocomplete="off" />
             </label>
-            <button id="publishBtn" class="btn primary">Publish</button>
+            <button id="publishBtn" class="btn primary">Publish &amp; get links</button>
             <button id="enableAutoRefreshBtn" class="btn" type="button">Enable auto-refresh</button>
           </div>
           <p class="notice notice--warn">Published URLs are public and unauthenticated. If your stream URLs contain private tokens, treat the link like a password.</p>

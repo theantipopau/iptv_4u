@@ -362,7 +362,22 @@ function applyLoadedState() {
   const channelCount = state.xmlSummary?.channelCount ?? 0;
   const programmeCount = state.xmlSummary?.programmeCount ?? 0;
   el.summary.textContent = `Loaded ${state.m3uChannels.length} M3U channels, ${channelCount} XMLTV channels, ${programmeCount} programmes.`;
+  markStepDone('sec-load');
   renderTable();
+}
+
+// On phones a finished step folds to its header (styles.css). Tapping a done
+// header reopens it; tapping one that was never finished does nothing.
+function markStepDone(id) {
+  const card = document.getElementById(id);
+  card.dataset.complete = '1';
+  card.classList.add('is-done');
+}
+
+for (const id of ['sec-load', 'sec-sources']) {
+  document.querySelector(`#${id} .card-head`).addEventListener('click', () => {
+    if (document.getElementById(id).dataset.complete) document.getElementById(id).classList.toggle('is-done');
+  });
 }
 
 // ---- table rendering ------------------------------------------------------
@@ -696,6 +711,7 @@ async function discoverSources() {
   const result = await api('/api/discover-sources');
   state.discoveredSources = result.sources;
   el.sourceStatus.textContent = `Discovered ${result.count} online sources.`;
+  markStepDone('sec-sources');
 }
 
 // ---- matching ---------------------------------------------------------
