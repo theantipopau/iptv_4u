@@ -1179,10 +1179,29 @@ export function refreshConfigKey(slug) {
   return `${REFRESH_CONFIG_PREFIX}${slug}`;
 }
 
+// Only web URLs (or inline data: URLs, which fetch nothing over the network)
+// make sense as a source. Checked at save time so a typo fails now, not hourly
+// inside the scheduler.
+function assertWebUrl(value, label) {
+  let protocol = '';
+  try {
+    protocol = new URL(value).protocol;
+  } catch {
+    // leave protocol empty: treated as invalid below
+  }
+  if (!['http:', 'https:', 'data:'].includes(protocol)) {
+    throw new Error(`${label} must be an http:// or https:// URL.`);
+  }
+}
+
 export async function saveRefreshConfig(hostedStore, input) {
   const slug = slugify(input.slug);
   if (!slug) throw new Error('A valid slug is required.');
   if (!input.m3uUrl || !input.m3uUrl.trim()) throw new Error('m3uUrl is required.');
+  assertWebUrl(input.m3uUrl.trim(), 'The M3U source');
+  if (input.customGuideUrl && String(input.customGuideUrl).trim()) {
+    assertWebUrl(String(input.customGuideUrl).trim(), 'The custom guide URL');
+  }
   if (input.intervalKey && !REFRESH_INTERVALS_MS[input.intervalKey]) {
     throw new Error('intervalKey must be one of: 6h, 12h, 24h.');
   }

@@ -175,6 +175,8 @@ The slug is remembered across sessions (autosave, and a saved/loaded project fil
 
 Publishing needs somewhere to persist the files: locally that's `.hosted-files/` on disk; on Cloudflare it's the `HOSTED_FILES` KV namespace (below).
 
+**Changing things needs an admin token.** Publish, saving auto-refresh settings, "Refresh now" and logo uploads are write requests. Set a secret named `ADMIN_TOKEN` and the app will ask for it once in each browser (it is then remembered there only). Locally, put `ADMIN_TOKEN=...` in `.env`. On Cloudflare run `npx wrangler secret put ADMIN_TOKEN`. While no token is set, the writes are open, exactly as before, so nothing changes until you set one. Playlist and guide URLs stay public either way. Setting the secret is a separate step from deploying: until you run it, anyone who finds your slug can still publish over it.
+
 ### TiViMate setup (and refreshing it)
 
 1. Playlist → **Add playlist → Remote playlist**, URL `https://<your-host>/iptv/<slug>.m3u`.

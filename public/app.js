@@ -135,11 +135,22 @@ async function readFileText(file) {
   return file.text();
 }
 
-async function api(url, options = {}) {
+const ADMIN_TOKEN_KEY = 'iptv4u_admin_token';
+
+function savedAdminToken() {
+  try {
+    return localStorage.getItem(ADMIN_TOKEN_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+async function api(url, options = {}, { retried = false } = {}) {
   const response = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      'X-Admin-Token': savedAdminToken(),
       ...(options.headers || {})
     }
   });
@@ -151,6 +162,19 @@ async function api(url, options = {}) {
     throw new Error(`The server returned a non-JSON response (HTTP ${response.status}).`);
   }
   if (!response.ok || !json.ok) {
+    // Only prompts when the server has an admin token configured and this
+    // browser doesn't have it (or has a wrong one). Asked once, then remembered.
+    if (response.status === 401 && !retried) {
+      const entered = window.prompt('This server needs the admin token to save changes. It is stored in this browser only.');
+      if (entered) {
+        try {
+          localStorage.setItem(ADMIN_TOKEN_KEY, entered.trim());
+        } catch {
+          // storage blocked: the retry below will fail and show the error
+        }
+        return api(url, options, { retried: true });
+      }
+    }
     // Carry the stage-specific code/details through, so callers can explain
     // exactly which stage failed instead of showing a generic message.
     const error = new Error(json.error || `Request failed: ${response.status}`);
@@ -1722,8 +1746,12 @@ const BROKEN_CODES = new Set(['GUIDE_EXPIRED', 'GUIDE_ENDING_SOON', 'AUTO_REFRES
 // slug is a standing fact, not an emergency: it lives in the Health tab.
 function renderAttentionBanner(report) {
   const banner = el.attentionBanner;
+  // Your current slug, plus anything auto-refreshing. Leftover slugs with
+  // nothing published were filling the banner on every fresh page.
+  const own = slugify(el.publishSlug.value.trim());
   const problems = [];
   for (const row of report?.slugs || []) {
+    if (!row.refresh?.enabled && !(own && row.slug === own)) continue;
     const broken = (row.warnings || []).filter((warning) => BROKEN_CODES.has(warning.code));
     if (row.slug && !row.refresh?.enabled && row.published) {
       broken.push({ message: 'No auto-refresh — this guide will expire on its own. Set it up under Publish → Auto-refresh.' });

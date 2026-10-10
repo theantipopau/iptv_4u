@@ -31,6 +31,7 @@ import {
   publicSlugId
 } from './shared/epg-service.js';
 import { buildHostedResponse } from './shared/serve.js';
+import { assertAdmin } from './shared/core.js';
 import { createKvCache, createHostedKvStore } from './shared/kv-cache.js';
 import { logEvent } from './shared/log.js';
 
@@ -117,11 +118,13 @@ export default {
       }
 
       if (pathname === '/api/publish' && request.method === 'POST') {
+        assertAdmin(request.headers.get('X-Admin-Token'), env.ADMIN_TOKEN);
         const body = await readJson(request);
         return ok(await publishFiles(hostedStore, body.slug, body));
       }
 
       if (pathname === '/api/refresh-config' && request.method === 'POST') {
+        assertAdmin(request.headers.get('X-Admin-Token'), env.ADMIN_TOKEN);
         const body = await readJson(request);
         return ok({ config: await saveRefreshConfig(hostedStore, body) });
       }
@@ -132,6 +135,7 @@ export default {
       }
 
       if (pathname === '/api/refresh-now' && request.method === 'POST') {
+        assertAdmin(request.headers.get('X-Admin-Token'), env.ADMIN_TOKEN);
         const body = await readJson(request);
         const config = await getRefreshConfig(hostedStore, body.slug);
         if (!config) {
@@ -167,6 +171,7 @@ export default {
       }
 
       if (pathname === '/api/upload-logo' && request.method === 'POST') {
+        assertAdmin(request.headers.get('X-Admin-Token'), env.ADMIN_TOKEN);
         return ok(await uploadLogoAsset(hostedStore, await readJson(request)));
       }
 

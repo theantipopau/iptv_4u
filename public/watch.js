@@ -1,4 +1,5 @@
 import {
+  escapeHtml,
   parseM3U,
   channelKey,
   parseGuideForNowNext,
@@ -188,15 +189,6 @@ if (crossTabChannel) {
       renderCrossTabWarning();
     }
   }, 10000);
-}
-
-function escapeHtml(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 function setOverlay(message, { clickToPlay = false } = {}) {

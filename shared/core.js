@@ -193,6 +193,20 @@ export function pickBestName(displayNames, fallback) {
   return fallback || '';
 }
 
+// Write endpoints are gated by one shared secret (ADMIN_TOKEN) sent as the
+// X-Admin-Token header. Callers skip this entirely while no token is configured,
+// so the app keeps working until the secret is set (see README).
+export function assertAdmin(given, expected) {
+  if (!expected) return;
+  let diff = typeof given === 'string' && given.length === expected.length ? 0 : 1;
+  for (let i = 0; diff === 0 && i < expected.length; i++) diff |= given.charCodeAt(i) ^ expected.charCodeAt(i);
+  if (diff === 0) return;
+  const error = new Error(given ? 'The admin token is wrong.' : 'This action needs the admin token.');
+  error.status = 401;
+  error.code = given ? 'ADMIN_TOKEN_INVALID' : 'ADMIN_TOKEN_REQUIRED';
+  throw error;
+}
+
 export function normalizeWorkerUrl(baseUrl, value) {
   // Some worker.json files declare `channels`/`guide` as an object (e.g.
   // multiple language/quality variants) rather than a plain string path.

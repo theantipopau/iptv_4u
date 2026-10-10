@@ -23,6 +23,7 @@ import {
   publicSlugId
 } from './shared/epg-service.js';
 import { buildHostedResponse } from './shared/serve.js';
+import { assertAdmin } from './shared/core.js';
 import { createNodeCache } from './shared/node-cache.js';
 import { logEvent } from './shared/log.js';
 
@@ -104,7 +105,13 @@ app.post('/api/export-m3u', handle(async (req) => exportM3u(req.body)));
 
 app.post('/api/build-from-plan', handle(async (req) => buildPublication(cache, TMDB_API_KEY, req.body)));
 
-app.post('/api/publish', handle(async (req) => publishFiles(hostedStore, req.body.slug, req.body)));
+// Write routes below all check the admin token first (see assertAdmin).
+const requireAdmin = (req) => assertAdmin(req.get('X-Admin-Token'), process.env.ADMIN_TOKEN);
+
+app.post('/api/publish', handle(async (req) => {
+  requireAdmin(req);
+  return publishFiles(hostedStore, req.body.slug, req.body);
+}));
 
 // Published files are served through the same shared layer the Cloudflare
 // Worker uses (shared/serve.js): identical status codes, content types,
@@ -137,7 +144,10 @@ app.get('/api/health/epg/:slug', handle(async (req) => ({
   id: await publicSlugId(hostedStore, req.params.slug)
 })));
 
-app.post('/api/upload-logo', handle(async (req) => uploadLogoAsset(hostedStore, req.body)));
+app.post('/api/upload-logo', handle(async (req) => {
+  requireAdmin(req);
+  return uploadLogoAsset(hostedStore, req.body);
+}));
 
 app.get('/logo/:id', async (req, res) => {
   const asset = await getLogoAsset(hostedStore, req.params.id);
@@ -146,11 +156,15 @@ app.get('/logo/:id', async (req, res) => {
   res.type(asset.contentType).send(Buffer.from(asset.imageBase64, 'base64'));
 });
 
-app.post('/api/refresh-config', handle(async (req) => ({ config: await saveRefreshConfig(hostedStore, req.body) })));
+app.post('/api/refresh-config', handle(async (req) => {
+  requireAdmin(req);
+  return { config: await saveRefreshConfig(hostedStore, req.body) };
+}));
 
 app.get('/api/refresh-config/:slug', handle(async (req) => ({ config: await getRefreshConfig(hostedStore, req.params.slug) })));
 
 app.post('/api/refresh-now', handle(async (req) => {
+  requireAdmin(req);
   const config = await getRefreshConfig(hostedStore, req.body.slug);
   if (!config) {
     const error = new Error('No auto-refresh config saved for this slug yet — save one first.');
@@ -201,7 +215,9 @@ export function startAutoRefreshScheduler() {
 export { app };
 
 if (!process.env.IPTV4U_NO_LISTEN) {
-  app.listen(PORT, () => {
+  // Loopback only: without a host, Express listens on every interface and the
+  // LAN could reach the write routes.
+  app.listen(PORT, '127.0.0.1', () => {
     console.log(`IPTV 4U running on http://localhost:${PORT}`);
     if (!TMDB_API_KEY) {
       console.log('TMDB_API_KEY not set — 24/7 channel art lookup will be skipped (see .env.example).');
