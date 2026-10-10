@@ -90,6 +90,7 @@ function handle(fn) {
 
 app.get('/api/discover-sources', handle(async (req) => {
   const force = req.query.refresh === '1';
+  if (force) requireAdmin(req);
   return discoverSources(cache, force);
 }));
 

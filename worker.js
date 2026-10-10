@@ -90,7 +90,11 @@ export default {
 
     try {
       if (pathname === '/api/discover-sources' && request.method === 'GET') {
-        return ok(await discoverSources(cache, url.searchParams.get('refresh') === '1'));
+        // Forcing a refresh re-fetches every worker host: that's the expensive
+        // path, so only the owner can trigger it.
+        const force = url.searchParams.get('refresh') === '1';
+        if (force) assertAdmin(request.headers.get('X-Admin-Token'), env.ADMIN_TOKEN);
+        return ok(await discoverSources(cache, force));
       }
 
       if (pathname === '/api/parse-files' && request.method === 'POST') {
