@@ -73,6 +73,7 @@
             <label>
               <span>XMLTV guide <em class="opt">optional</em></span>
               <input id="xmlFile" type="file" accept=".xml,.xmltv" />
+              <span class="hint">XMLTV is the standard TV-guide file format. Your provider may give you one.</span>
             </label>
           </div>
           <div class="card-actions">
@@ -142,7 +143,7 @@
                 <th class="col-check"><input type="checkbox" id="selectAllCheckbox" title="Select all visible" /></th>
                 <th>Logo</th>
                 <th data-sort="name" class="sortable">M3U channel</th>
-                <th data-sort="tvgid" class="sortable">Current tvg-id</th>
+                <th data-sort="tvgid" class="sortable" title="The tvg-id your player uses to find this channel's guide">Guide ID</th>
                 <th data-sort="status" class="sortable">Linked EPG</th>
                 <th data-sort="score" class="sortable">Score</th>
                 <th>Actions</th>
@@ -212,6 +213,7 @@
             <label>
               <span>URL slug</span>
               <input id="publishSlug" type="text" placeholder="matt" autocomplete="off" />
+              <span class="hint">A short name for your playlist's web address, e.g. matt.</span>
             </label>
             <button id="publishBtn" class="btn primary">Publish &amp; get links</button>
             <button id="enableAutoRefreshBtn" class="btn" type="button">Enable auto-refresh</button>
