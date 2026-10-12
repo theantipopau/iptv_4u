@@ -38,7 +38,7 @@ jobs:
           curl -sL --fail -o /tmp/au1.xml.gz https://epgshare01.online/epgshare01/epg_ripper_AU1.xml.gz
           gunzip -f /tmp/au1.xml.gz
           node scripts/trim_au_sports.mjs /tmp/au1.xml guides/au-fox-sports.xml | tee /tmp/au.log
-          grep -q "kept channels: 42 of 42 requested" /tmp/au.log
+          grep -q "kept channels: 34 of 34 requested" /tmp/au.log
 
       - name: Refresh UK (major national channels)
         run: |

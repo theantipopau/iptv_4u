@@ -11,15 +11,12 @@ const OUT = process.argv[3];
 const KEEP_IDS = new Set([
   'ESPN.au', 'ESPN2.au',
   'FOX8.au', 'FOX8plus2.au',
-  'FoxCricket.alt.au', 'FoxCricket.au',
-  'FoxFooty.alt.au', 'FoxFooty.au',
-  'FoxLeague.alt.au', 'FoxLeague.au',
-  'FoxNews.au',
-  'FoxSports503.alt.au', 'FoxSports503.au',
-  'FoxSports505.au', 'FoxSports505alt.au',
-  'FoxSports506.alt.au', 'FoxSports506.au',
-  'FoxSportsMore.alt.au', 'FoxSportsMore.au',
-  'FoxSportsNews.alt.au', 'FoxSportsNews.au',
+  // ponytail: epgshare01 stopped publishing the duplicate ".alt.au" feeds
+  // (same display names, different schedules) around 2026-10-11; the plain
+  // ids below carry the same channels, so those alt ids were dropped.
+  'FoxCricket.au', 'FoxFooty.au', 'FoxLeague.au', 'FoxNews.au',
+  'FoxSports503.au', 'FoxSports505.au', 'FoxSports506.au',
+  'FoxSportsMore.au', 'FoxSportsNews.au',
   'FoxtelMoviesAction.au', 'FoxtelMoviesActionplus2.au',
   'FoxtelMoviesComedy.au', 'FoxtelMoviesDrama.au',
   'FoxtelMoviesFamily.au', 'FoxtelMoviesFamilyplus2.au',
