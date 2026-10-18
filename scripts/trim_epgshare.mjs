@@ -34,7 +34,11 @@ const arrify = (v) => (v ? (Array.isArray(v) ? v : [v]) : []);
 
 const channels = arrify(tv.channel).filter((c) => matchesAny(c['@_id'] || ''));
 const keepIds = new Set(channels.map((c) => c['@_id']));
-const programmes = arrify(tv.programme).filter((p) => keepIds.has(p['@_channel']));
+// Optional MAX_DAYS=21 drops programmes starting more than 21 days out, to keep a
+// long-running source (nzxmltv carries ~6 weeks) under the 15MB publish limit.
+const maxDays = Number(process.env.MAX_DAYS) || 0;
+const cutoff = maxDays ? new Date(Date.now() + maxDays * 86400000).toISOString().slice(0, 19).replace(/[-T:]/g, '') : null;
+const programmes = arrify(tv.programme).filter((p) => keepIds.has(p['@_channel']) && (!cutoff || String(p['@_start']).slice(0, 14) < cutoff));
 
 console.log('kept channels:', channels.length);
 console.log('kept programmes:', programmes.length);

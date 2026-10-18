@@ -28,7 +28,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install dependencies
         run: npm ci
@@ -88,7 +88,8 @@ jobs:
       - name: Refresh NZ (Sky Sport + ESPN/ESPN2)
         run: |
           curl -sL --fail -o /tmp/sky_full.xml https://nzxmltv.github.io/sky/guide.xml
-          node scripts/trim_epgshare.mjs /tmp/sky_full.xml guides/nz-sky-sport.xml "NZXMLTV Sky (trimmed to Sky Sport 1-9 + ESPN/ESPN2)" "^(5[0-9]|6[01])$" | tee /tmp/nz.log
+          # Two weeks of NZ keeps the published guide well under the 15MB limit (the source carries ~3).
+          MAX_DAYS=14 node scripts/trim_epgshare.mjs /tmp/sky_full.xml guides/nz-sky-sport.xml "NZXMLTV Sky (trimmed to Sky Sport 1-9 + ESPN/ESPN2)" "^(5[0-9]|6[01])$" | tee /tmp/nz.log
           grep -q "kept channels: 12" /tmp/nz.log
 
       - name: Refresh Stan Sport events (TheSportsDB schedule page)

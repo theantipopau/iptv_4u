@@ -12,7 +12,7 @@ The 10 Sky Sport NZ channels (Sky Sport Select, 1-9, Premier League) plus ESPN a
 
 **Use it**: paste `https://raw.githubusercontent.com/theantipopau/iptv_4u/main/guides/nz-sky-sport.xml` into the "Your own EPG/guide URL(s)" field (Step 2), alongside any other guide URLs you're already using.
 
-Kept current by the daily workflow (see top of this file). Manual regeneration, if you ever need it sooner: `node scripts/trim_epgshare.mjs sky_full.xml guides/nz-sky-sport.xml "NZXMLTV Sky (trimmed to Sky Sport 1-9 + ESPN/ESPN2)" "^(5[0-9]|6[01])$"` against a fresh copy of `sky/guide.xml` — or point your custom-guide field at the full un-filtered `https://nzxmltv.github.io/sky/guide.xml` directly if you're running this app locally (`npm start`) instead of on Cloudflare — Node has no comparable size ceiling.
+Kept current by the daily workflow (see top of this file), trimmed to the next 14 days (`MAX_DAYS=14`) so the published guide stays well under the 15MB publish limit. Manual regeneration, if you ever need it sooner: `node scripts/trim_epgshare.mjs sky_full.xml guides/nz-sky-sport.xml "NZXMLTV Sky (trimmed to Sky Sport 1-9 + ESPN/ESPN2)" "^(5[0-9]|6[01])$"` against a fresh copy of `sky/guide.xml` — or point your custom-guide field at the full un-filtered `https://nzxmltv.github.io/sky/guide.xml` directly if you're running this app locally (`npm start`) instead of on Cloudflare — Node has no comparable size ceiling.
 
 ## au-fox-sports.xml
 
