@@ -982,6 +982,9 @@ function buildOverrides() {
 
 // One request builds both files on the server (streaming only the needed
 // channels out of each guide), instead of one request per channel.
+// Channels the last build could only give a placeholder guide (no free source).
+let lastPlaceholderChannels = [];
+
 async function buildPublicationFromPlan() {
   const plan = buildPlan();
   const overrides = buildOverrides();
@@ -999,6 +1002,7 @@ async function buildPublicationFromPlan() {
     });
     const counts = result.counts || {};
     el.mergeStatus.textContent = `Built — ${counts.guideCount ?? 0} channel(s) with a guide, ${counts.logoCount ?? 0} logo-only${counts.failedCount ? `, ${counts.failedCount} guide source(s) failed` : ''}.`;
+    lastPlaceholderChannels = counts.placeholderChannels || [];
     return { m3u: result.m3u, xml: result.xml, plan, overrides };
   } catch (error) {
     el.mergeStatus.textContent = '';
@@ -1517,6 +1521,12 @@ function renderPublishSummary({ slug, health, warnings = [], error = null }) {
   if (health?.playlist) summary.appendChild(line('✅', `Playlist healthy — ${health.playlist.channels} channels`, 'ok'));
   if (health?.epg) {
     summary.appendChild(line('✅', `Guide healthy — ${health.epg.channels} channels, ${health.epg.programmes} programmes (${health.epg.currentOrFutureProgrammes} current or upcoming)`, 'ok'));
+  }
+
+  if (lastPlaceholderChannels.length) {
+    const shown = lastPlaceholderChannels.slice(0, 8).join(', ');
+    const more = lastPlaceholderChannels.length > 8 ? ` and ${lastPlaceholderChannels.length - 8} more` : '';
+    summary.appendChild(line('•', `${lastPlaceholderChannels.length} channel(s) have only a placeholder guide (no free schedule exists): ${shown}${more}`, 'ok'));
   }
 
   const expiry = formatExpiry(health?.expiry);

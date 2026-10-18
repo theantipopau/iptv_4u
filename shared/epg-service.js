@@ -29,6 +29,7 @@ import {
   twentyFourSevenTitle,
   twentyFourSevenDescription,
   twentyFourSevenCurated,
+  placeholderProgramme,
   buildLogoMap,
   searchIptvApi,
   matchAliasRegistry,
@@ -1693,10 +1694,33 @@ export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, p
     synthesizedCount += 1;
   }
 
+  // Any other playlist channel still without programmes (no free guide covers
+  // it) gets a repeating placeholder, so a player shows something rather than
+  // "no information". Named in the counts so the publish summary can list them.
+  const placeholderChannels = [];
+  for (const channel of channels) {
+    const link = links.find((candidate) => candidate.channelIndex === channel.index);
+    const channelId = link?.channelId || String(channel.attrs?.['tvg-id'] || '').trim();
+    // A channel matched to a real guide whose fetch failed must stay visibly
+    // empty — a placeholder would hide that failure from the publish checks.
+    if (!channelId || withProgrammes.has(channelId) || link?.canMergeGuide) continue;
+    const { title, description } = placeholderProgramme(channel.name);
+    let channelNode = base.channel.find((node) => node['@_id'] === channelId);
+    if (!channelNode) {
+      channelNode = { '@_id': channelId, 'display-name': [channel.name] };
+      base.channel.push(channelNode);
+    }
+    const logoUrl = link?.logoUrl || channel.attrs?.['tvg-logo'] || null;
+    if (logoUrl && !channelNode.icon) channelNode.icon = { '@_src': logoUrl };
+    base.programme.push(...synthesizeSchedule(channelId, { title, description }, now));
+    withProgrammes.add(channelId);
+    placeholderChannels.push(channel.name);
+  }
+
   return {
     m3u,
     xml: buildXmlTv(base),
-    counts: { guideCount, logoCount, failedCount, overrideCount, planCount, unplannedCount, synthesizedCount }
+    counts: { guideCount, logoCount, failedCount, overrideCount, planCount, unplannedCount, synthesizedCount, placeholderChannels }
   };
 }
 

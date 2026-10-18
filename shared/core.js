@@ -567,6 +567,33 @@ const TWENTY_FOUR_SEVEN_FIXES = Object.fromEntries(
   TWENTY_FOUR_SEVEN_CURATED.flatMap((entry) => entry.names.map((name) => [titleKey(name), entry]))
 );
 
+// Live channels that no free guide covers (checked: epgshare01's full set and
+// the provider's own guide). Rather than show "no information" they get a
+// repeating placeholder programme; the note says plainly it isn't a schedule.
+const PLACEHOLDER_NOTE = 'No programme schedule is published for this channel, so this guide entry is a placeholder.';
+const PLACEHOLDER_CHANNELS = [
+  [/sky news australia/i, 'Sky News Australia', 'Live Australian and international news, 24 hours a day.'],
+  [/fox sports 508/i, 'Fox Sports 508', 'A Fox Sports live-sport channel showing whichever event is on air.'],
+  [/ufc ppv/i, 'UFC Pay-Per-View', 'Live UFC pay-per-view coverage, from the early prelims to the main card, when an event is on.'],
+  [/sky sports f1/i, 'Sky Sports F1', 'Live Formula 1 coverage: practice, qualifying and races, plus analysis and documentaries.'],
+  [/sky sports main event/i, 'Sky Sports Main Event', 'Live top fixtures and big sporting events, with build-up and analysis.'],
+  [/clubland/i, 'Clubland TV', 'Dance and club music videos, non-stop.'],
+  [/trace hits/i, 'Trace Hits', 'The latest chart hits in music videos, non-stop.'],
+  [/pop \+1/i, 'Pop +1', 'Kids’ entertainment, shown an hour after the main Pop channel.'],
+  [/hallmark movies/i, 'Hallmark Movies & Mysteries', 'Cosy mystery films and series, around the clock.'],
+  [/super ?sport rugby/i, 'SuperSport Rugby', 'Live rugby from around the world, plus replays and analysis.'],
+  [/sky sport 8/i, 'Sky Sport 8 Premier League', 'Live English Premier League football, with build-up and highlights.'],
+  [/peacock/i, 'Peacock', 'A live Peacock channel, streaming around the clock.']
+];
+
+/** A repeating placeholder {title, description} for a live channel that has no schedule anywhere. */
+export function placeholderProgramme(name) {
+  const known = PLACEHOLDER_CHANNELS.find(([pattern]) => pattern.test(name || ''));
+  if (known) return { title: known[1], description: `${known[2]} ${PLACEHOLDER_NOTE}` };
+  const title = String(name || '').replace(/[([][^)\]]*[)\]]/g, ' ').replace(/^[A-Za-z]{2,5}\s*[:|-]\s*/, '').replace(/\s+/g, ' ').trim() || String(name || '').trim();
+  return { title, description: `${title} is a live channel. ${PLACEHOLDER_NOTE}` };
+}
+
 const ROMAN_NUMERAL = /^(?=[IVXLC]+$)C{0,3}(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/;
 
 // "LAW & ORDER" -> "Law & Order"; roman numerals ("Planet Earth II") and

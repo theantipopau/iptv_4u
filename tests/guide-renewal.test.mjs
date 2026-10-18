@@ -127,7 +127,9 @@ describe('one-request build for Publish/Export', () => {
     assert.equal(result.counts.unplannedCount, 0);
     assert.match(result.m3u, /tvg-id="brand\.new"/);
     assert.match(result.m3u, /tvg-logo="http:\/\/example\.invalid\/one\.png"/);
-    assert.equal((result.xml.match(/<programme /g) || []).length, 24);
+    assert.equal((result.xml.match(/<programme [^>]*channel="example\.one"/g) || []).length, 24);
+    // No guide anywhere for it, so it gets a placeholder rather than nothing.
+    assert.deepEqual(result.counts.placeholderChannels, ['Brand New']);
     assert.match(result.xml, /<channel id="brand\.new">/);
   });
 
@@ -246,4 +248,15 @@ test('every curated 24/7 entry has a description, and typos resolve to the right
   assert.equal(twentyFourSevenTitle('24/7 Seinfeld S07 [VIP]'), 'Seinfeld Season 7');
   assert.match(twentyFourSevenCurated('24/7 DISNEY Movies').description, /Moana/);
   assert.equal(twentyFourSevenCurated('24/7 Some Unknown Show'), null);
+});
+
+test('channels with no schedule anywhere get a labelled placeholder, and are reported', async () => {
+  const { buildFromPlan } = await import('../shared/epg-service.js');
+  const { parseM3U } = await import('../shared/core.js');
+  const channels = parseM3U('#EXTM3U\n#EXTINF:-1 tvg-id="AU Sky News Australia (D)" group-title="Australia",AU Sky News Australia (D)\nhttp://h/1\n');
+  const cache = { get: async () => null, set: async () => {}, getStale: async () => null };
+  const result = await buildFromPlan(cache, null, { channels, plan: { 'AU Sky News Australia (D)': { channelId: null } } });
+  assert.deepEqual(result.counts.placeholderChannels, ['AU Sky News Australia (D)']);
+  assert.match(result.xml, /<title[^>]*>Sky News Australia<\/title>/);
+  assert.match(result.xml, /placeholder/);
 });
