@@ -1621,6 +1621,9 @@ export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, p
   base.channel = arrify(base.channel);
   base.programme = arrify(base.programme);
 
+  // Several playlist channels can share one guide id (a channel and its +1/HD
+  // twin); its programmes go in once, not once per playlist entry.
+  const mergedIds = new Set();
   for (const [guideUrl, guideLinks] of guideGroups) {
     try {
       const subset = await fetchGuideSubset(guideUrl, guideLinks.map((link) => link.channelId));
@@ -1631,7 +1634,8 @@ export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, p
         // channel node, because the M3U already carries this id as its
         // tvg-id (see resolveGuideChannel).
         const matchedChannel = resolveGuideChannel(guide, link.channelId, link.channelName);
-        if (!matchedChannel) continue;
+        if (!matchedChannel || mergedIds.has(matchedChannel.id)) continue;
+        mergedIds.add(matchedChannel.id);
 
         const existingIdx = base.channel.findIndex((c) => c['@_id'] === matchedChannel.id);
         let channelNode;

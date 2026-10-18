@@ -267,3 +267,14 @@ test('"<Film> Movie Collection" names resolve to the same curated entry', async 
   assert.match(twentyFourSevenCurated('24/7 Star Trek Movie Collection [VIP]').description, /Enterprise/);
   assert.ok(twentyFourSevenCurated('24/7 Transformers Movie Collection [VIP]').logo);
 });
+
+test('playlist channels that share one guide id get its programmes once, not once each', async () => {
+  const { buildFromPlan } = await import('../shared/epg-service.js');
+  const { parseM3U } = await import('../shared/core.js');
+  const guideUrl = dataUrl('text/xml', buildGuide({ ids: ['shared.one'], programmesPerChannel: 10 }));
+  const channels = parseM3U('#EXTM3U\n#EXTINF:-1 tvg-id="a",Chan A\nhttp://h/1\n#EXTINF:-1 tvg-id="b",Chan A (D)\nhttp://h/2\n');
+  const link = { channelId: 'shared.one', channelName: 'Chan A', guideUrl, canMergeGuide: true, logoUrl: null, tmdb: null, synthesize: false };
+  const cache = { get: async () => null, set: async () => {}, getStale: async () => null };
+  const result = await buildFromPlan(cache, null, { channels, plan: { 'Chan A': link, 'Chan A (D)': link } });
+  assert.equal((result.xml.match(/<programme [^>]*channel="shared\.one"/g) || []).length, 10);
+});
