@@ -28,6 +28,7 @@ import {
   cleanTitleForLookup,
   twentyFourSevenTitle,
   twentyFourSevenDescription,
+  twentyFourSevenCurated,
   buildLogoMap,
   searchIptvApi,
   matchAliasRegistry,
@@ -1582,6 +1583,17 @@ export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, p
       };
       links.push(link);
     }
+    // A hand-picked logo for this channel wins over whatever the match found,
+    // unless the user fixed the channel manually in the app.
+    const curatedLogo = twentyFourSevenCurated(channel.name)?.logo;
+    if (curatedLogo && !link?.manual) {
+      if (link) {
+        link.logoUrl = curatedLogo;
+      } else {
+        link = { channelIndex: channel.index, channelId: tvgId, channelName: channel.attrs?.['tvg-name'] || channel.name, logoUrl: curatedLogo, canMergeGuide: false };
+        links.push(link);
+      }
+    }
     twentyFourSeven.push({ channel, link, channelId: link?.channelId || tvgId });
   }
 
@@ -1631,7 +1643,10 @@ export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, p
         // Replace, never append: a base guide may already hold (older)
         // programmes for this id.
         if (baseXml) base.programme = base.programme.filter((p) => p['@_channel'] !== matchedChannel.id);
+        // Upstream guides carry the odd zero-length programme (stop == start);
+        // players ignore them and the publish check flags them, so drop them.
         for (const programme of guide.programmes.filter((p) => p['@_channel'] === matchedChannel.id)) {
+          if (String(programme['@_stop']).slice(0, 14) <= String(programme['@_start']).slice(0, 14)) continue;
           base.programme.push(programme);
         }
       }
@@ -1651,9 +1666,11 @@ export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, p
 
     if (link.synthesize) {
       base.programme = base.programme.filter((p) => p['@_channel'] !== link.channelId);
+      const channel = channels.find((candidate) => candidate.index === link.channelIndex);
+      const curated = channel && twentyFourSevenCurated(channel.name);
       base.programme.push(...synthesizeSchedule(link.channelId, {
-        title: link.tmdb?.title || link.channelName || link.channelId,
-        description: link.tmdb?.overview || null
+        title: curated ? twentyFourSevenTitle(channel.name) : (link.tmdb?.title || link.channelName || link.channelId),
+        description: curated?.description || link.tmdb?.overview || null
       }, now));
     }
   }
@@ -1662,7 +1679,8 @@ export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, p
   const withProgrammes = new Set(base.programme.map((programme) => programme['@_channel']));
   for (const { channel, link, channelId } of twentyFourSeven) {
     if (!channelId || withProgrammes.has(channelId)) continue;
-    const title = link?.tmdb?.title || twentyFourSevenTitle(channel.name);
+    const curatedText = twentyFourSevenDescription(channel.name);
+    const title = curatedText ? twentyFourSevenTitle(channel.name) : (link?.tmdb?.title || twentyFourSevenTitle(channel.name));
     let channelNode = base.channel.find((node) => node['@_id'] === channelId);
     if (!channelNode) {
       channelNode = { '@_id': channelId, 'display-name': [channel.name] };
@@ -1670,7 +1688,7 @@ export async function buildFromPlan(cache, apiKey, { channels, overrides = {}, p
     }
     const logoUrl = link?.logoUrl || link?.tmdb?.posterUrl || channel.attrs?.['tvg-logo'] || null;
     if (logoUrl && !channelNode.icon) channelNode.icon = { '@_src': logoUrl };
-    base.programme.push(...synthesizeSchedule(channelId, { title, description: link?.tmdb?.overview || twentyFourSevenDescription(channel.name) }, now));
+    base.programme.push(...synthesizeSchedule(channelId, { title, description: curatedText || link?.tmdb?.overview || null }, now));
     withProgrammes.add(channelId);
     synthesizedCount += 1;
   }

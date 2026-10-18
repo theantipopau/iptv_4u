@@ -38,9 +38,17 @@ for (const m of section.matchAll(/<h2><br>\w{3} (\d{1,2}) (\w{3})[^<]*<\/h2>|<a 
 }
 events.sort((a, b) => a.startMs - b.startMs);
 
-// Greedy slot assignment: first slot with no overlapping event already in it.
+// The page has no sport or ranking, so "biggest" is a guess: national-team and
+// rugby/AFL/NRL fixtures, then matches between big clubs. Event 1 gets the
+// biggest, Event 2 the next, and so on. ponytail: keyword guess, swap for real
+// sport data if the source ever provides it.
+const BIG = /\b(rugby|wallabies|all blacks|springboks|australia|new zealand|afl|nrl|state of origin|manchester united|manchester city|liverpool|arsenal|chelsea|tottenham|real madrid|barcelona|bayern|juventus|inter|milan|psg)\b/gi;
+const rank = (ev) => (ev.title.match(BIG) || []).length;
+
+// Greedy slot assignment, biggest events first: first slot with no overlapping
+// event already in it, so the top match of any time lands on a low slot number.
 const slots = Array.from({ length: SLOTS }, () => []);
-for (const ev of events) {
+for (const ev of [...events].sort((a, b) => rank(b) - rank(a) || a.startMs - b.startMs)) {
   const n = slots.findIndex((list) => list.every((o) => o.stopMs <= ev.startMs || o.startMs >= ev.stopMs));
   if (n < 0) continue;
   ev.slot = n + 1;
@@ -56,6 +64,21 @@ for (const ev of events.filter((e) => e.slot)) {
   const desc = `On Stan Sport at this time: ${concurrent.join('; ')}. Which Event slot carries which match is a best guess.`;
   xml += `  <programme start="${stamp(ev.startMs)}" stop="${stamp(ev.stopMs)}" channel="Stan Sport AU Event ${ev.slot}"><title>${esc(ev.title)}</title><desc>${esc(desc)}</desc></programme>\n`;
 }
+// Idle slots are not left blank: every slot gets 6-hour filler blocks over the
+// coming week saying what is on Stan Sport around then, so a player never
+// shows "no information" for a channel that is really a live-event slot.
+const BLOCK_MS = 6 * 60 * 60 * 1000;
+const first = Math.floor(Date.now() / BLOCK_MS) * BLOCK_MS;
+for (let n = 1; n <= SLOTS; n++) {
+  for (let t = first; t < first + 7 * 24 * 60 * 60 * 1000; t += BLOCK_MS) {
+    if (slots[n - 1].some((o) => o.startMs < t + BLOCK_MS && o.stopMs > t)) continue;
+    const upcoming = events.filter((o) => o.stopMs > t && o.startMs < t + 24 * 60 * 60 * 1000).map((o) => o.title);
+    const desc = upcoming.length
+      ? `Stan Sport live-event channel. Nothing is listed for this slot right now; on Stan Sport around this time: ${upcoming.join('; ')}.`
+      : 'Stan Sport live-event channel. It shows whichever live sport Stan Sport is broadcasting; nothing is listed for this slot right now.';
+    xml += `  <programme start="${stamp(t)}" stop="${stamp(t + BLOCK_MS)}" channel="Stan Sport AU Event ${n}"><title>Stan Sport Event ${n}</title><desc>${esc(desc)}</desc></programme>\n`;
+  }
+}
 xml += '</tv>\n';
 fs.writeFileSync(OUT, xml);
-console.log(`stan events: ${events.length} matches in ${SLOTS} slots; wrote ${OUT}`);
+console.log(`stan events: ${events.length} matches in ${SLOTS} slots (+ idle-slot filler); wrote ${OUT}`);

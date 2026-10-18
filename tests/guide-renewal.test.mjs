@@ -230,12 +230,20 @@ describe('24/7 titles', () => {
   test('known film series and provider typos get readable titles', async () => {
     const { twentyFourSevenTitle, twentyFourSevenDescription } = await import('../shared/core.js');
     assert.equal(twentyFourSevenTitle('24/7 Harry Poter [VIP]'), 'Harry Potter');
-    assert.match(twentyFourSevenDescription('24/7 Harry Poter [VIP]'), /Harry Potter films on repeat/);
+    assert.match(twentyFourSevenDescription('24/7 Harry Poter [VIP]'), /Harry Potter, non-stop/);
     assert.equal(twentyFourSevenTitle('24/7 The Hobbit And Lord Of TheRings [VIP]'), 'The Lord of the Rings & The Hobbit');
     assert.match(twentyFourSevenDescription('24/7 The Hobbit And Lord Of TheRings [VIP]'), /Lord of the Rings and The Hobbit films/);
     assert.equal(twentyFourSevenTitle('24/7 Bobs Burgers S11 [VIP]'), 'Bob’s Burgers Season 11');
     assert.equal(twentyFourSevenTitle('24/7 LAW & ORDER'), 'Law & Order');
     assert.equal(twentyFourSevenTitle('24/7 Planet Earth II [VIP]'), 'Planet Earth II');
-    assert.equal(twentyFourSevenDescription('24/7 Iron Man [VIP]'), null);
+    assert.equal(twentyFourSevenDescription('24/7 Some Unknown Show [VIP]'), null);
   });
+});
+
+test('every curated 24/7 entry has a description, and typos resolve to the right one', async () => {
+  const { twentyFourSevenCurated, twentyFourSevenTitle } = await import('../shared/core.js');
+  assert.match(twentyFourSevenCurated('24/7 Harry Poter [VIP]').description, /Philosopher’s Stone/);
+  assert.equal(twentyFourSevenTitle('24/7 Seinfeld S07 [VIP]'), 'Seinfeld Season 7');
+  assert.match(twentyFourSevenCurated('24/7 DISNEY Movies').description, /Moana/);
+  assert.equal(twentyFourSevenCurated('24/7 Some Unknown Show'), null);
 });

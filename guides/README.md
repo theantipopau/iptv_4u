@@ -37,7 +37,7 @@ Neither pretends to be exhaustive — US broadcast network affiliates (ABC/NBC/C
 
 ## stan-sport.xml
 
-The provider's 35 interchangeable "Stan Sport AU Event 1-35" slots, filled from [TheSportsDB's Stan Sport AU schedule page](https://www.thesportsdb.com/channel/6786-stan-sport-au-tv-schedule) (the free API key returns only one event, so the page is the only free source). **Best-effort:** the page lists matches but not which slot carries which, so matches are dealt out to slots in start order, assumed 2h each, and every programme's description lists everything on Stan Sport at that time. It only covers what that page lists (a handful of matches a week), so most slots are blank most of the time.
+The provider's 35 interchangeable "Stan Sport AU Event 1-35" slots, filled from [TheSportsDB's Stan Sport AU schedule page](https://www.thesportsdb.com/channel/6786-stan-sport-au-tv-schedule) (the free API key returns only one event, so the page is the only free source). **Best-effort:** the page lists matches but not which slot carries which, so matches are dealt out to slots in start order, assumed 2h each, and every programme's description lists everything on Stan Sport at that time. Slots are ranked, not random: Event 1 gets the biggest match (a keyword guess: rugby/national teams/big clubs), Event 2 the next, and so on. The page only lists a handful of matches a week, so every idle slot gets 6-hour filler blocks saying what Stan Sport has on around then, rather than being blank.
 
 **Use it**: paste `https://raw.githubusercontent.com/theantipopau/iptv_4u/main/guides/stan-sport.xml` into the "Your own EPG/guide URL(s)" field, re-match, and publish. **Regenerate**: `node scripts/stan_events.mjs guides/stan-sport.xml` (the daily workflow does this).
 

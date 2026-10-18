@@ -465,12 +465,11 @@ export function cleanTitleForLookup(name) {
   return s;
 }
 
-/**
- * A readable programme title for a 24/7 channel: "24/7 Seinfeld S07 [VIP]"
- * becomes "Seinfeld Season 7". Unlike cleanTitleForLookup, season markers are
- * kept — they're useful to a viewer, just not to a search.
- */
-export function twentyFourSevenTitle(name) {
+// Splits a 24/7 channel name into the show and an optional " Season N" tail,
+// and finds its curated entry (if any). Shared by the title/description
+// helpers below and by the publish step, which prefers curated text over a
+// TMDB guess (TMDB happily answers "Harry Poter" with "Wizards of Baking").
+function splitTwentyFourSeven(name) {
   let s = String(name || '');
   s = s.replace(/[([][^)\]]*[)\]]/g, ' ');
   s = s.replace(TWENTY_FOUR_SEVEN_REPLACE_RE, ' ');
@@ -479,40 +478,94 @@ export function twentyFourSevenTitle(name) {
   s = s.replace(/[|_]/g, ' ');
   s = s.replace(/\bS0*(\d{1,2})\b/gi, 'Season $1');
   s = s.replace(/\s+/g, ' ').trim();
-  if (!s) return String(name || '').trim();
-
+  if (!s) return { show: '', season: '', fixed: null };
   const seasonMatch = s.match(/^(.*?)( Season \d+)$/);
   const show = seasonMatch ? seasonMatch[1] : s;
-  const season = seasonMatch ? seasonMatch[2] : '';
-  const fixed = TWENTY_FOUR_SEVEN_FIXES[titleKey(show)];
+  return { show, season: seasonMatch ? seasonMatch[2] : '', fixed: TWENTY_FOUR_SEVEN_FIXES[titleKey(show)] || null };
+}
+
+/**
+ * A readable programme title for a 24/7 channel: "24/7 Seinfeld S07 [VIP]"
+ * becomes "Seinfeld Season 7". Unlike cleanTitleForLookup, season markers are
+ * kept — they're useful to a viewer, just not to a search.
+ */
+export function twentyFourSevenTitle(name) {
+  const { show, season, fixed } = splitTwentyFourSeven(name);
+  if (!show) return String(name || '').trim();
   return `${fixed ? fixed.title : titleCaseShouting(show)}${season}`;
+}
+
+/** The curated {title, description, logo} for a 24/7 channel, when one is known. */
+export function twentyFourSevenCurated(name) {
+  return splitTwentyFourSeven(name).fixed;
 }
 
 /** A curated description for a 24/7 channel, when one is known. */
 export function twentyFourSevenDescription(name) {
-  const title = twentyFourSevenTitle(name).replace(/ Season \d+$/, '');
-  return Object.values(TWENTY_FOUR_SEVEN_FIXES).find((fix) => fix.title === title)?.description || null;
+  return twentyFourSevenCurated(name)?.description || null;
 }
 
 const titleKey = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, '');
 
 // Provider channel names carry typos and odd spacing; these are the readable
-// titles (and, for film series, what's actually playing). Keyed by the
-// cleaned name with everything but letters and digits removed.
-const TWENTY_FOUR_SEVEN_FIXES = {
-  harrypoter: { title: 'Harry Potter', description: 'The Harry Potter films on repeat, around the clock.' },
-  harrypotter: { title: 'Harry Potter', description: 'The Harry Potter films on repeat, around the clock.' },
-  thehobbitandlordoftherings: { title: 'The Lord of the Rings & The Hobbit', description: 'The Lord of the Rings and The Hobbit films on repeat, around the clock.' },
-  bobsburgers: { title: 'Bob’s Burgers' },
-  oceanseleven: { title: 'Ocean’s Eleven' },
-  itsalwayssunnyinphiladelphia: { title: 'It’s Always Sunny in Philadelphia' },
-  spiderman: { title: 'Spider-Man' },
-  wreckitralph: { title: 'Wreck-It Ralph' },
-  cosmosaspacetimeodyssey: { title: 'Cosmos: A Spacetime Odyssey' },
-  missionimpossible: { title: 'Mission: Impossible' },
-  theblueplanet2001: { title: 'The Blue Planet' },
-  thebourne: { title: 'The Bourne Films' }
-};
+// titles and descriptions (what's actually playing) for the channels in the
+// published lineup. Keyed by the cleaned name with everything but letters and
+// digits removed — each entry lists the spellings it answers to. Add a `logo`
+// to pin a hand-picked image (applied at publish unless the channel was fixed
+// manually in the app). Not exhaustive: unknown channels fall back to a
+// generic line.
+const TWENTY_FOUR_SEVEN_CURATED = [
+  { names: ['Harry Poter', 'Harry Potter'], title: 'Harry Potter', description: 'Harry Potter, non-stop: all eight films play back to back, from Harry Potter and the Philosopher’s Stone to Harry Potter and the Deathly Hallows – Part 2. Follow Harry, Ron and Hermione through their years at Hogwarts.' },
+  { names: ['Iron Man'], title: 'Iron Man', logo: 'https://logos-world.net/wp-content/uploads/2020/12/Iron-Man-Logo-2008.png', description: 'Tony Stark builds the armour and takes on the world, with the Iron Man films on repeat from the 2008 original through Iron Man 2 and Iron Man 3.' },
+  { names: ['Star Trek'], title: 'Star Trek', logo: 'https://i.imgur.com/8cvXYiT.png', description: 'The crew of the starship Enterprise boldly go where no one has gone before, with Star Trek playing around the clock. Exploration, diplomacy and the occasional space battle.' },
+  { names: ['Seinfeld'], title: 'Seinfeld', description: 'Classic Seinfeld episodes, back to back. Jerry, George, Elaine and Kramer find comedy in the smallest details of New York life.' },
+  { names: ['Planet Earth II'], title: 'Planet Earth II', logo: 'https://i.imgur.com/mzL9YOP.png', description: 'David Attenborough explores the world’s islands, mountains, jungles, deserts, grasslands and cities in this landmark nature series. Spectacular footage plays on a continuous loop.' },
+  { names: ['Planet Earth III'], title: 'Planet Earth III', logo: 'https://i.imgur.com/mzL9YOP.png', description: 'David Attenborough returns with a new look at life on Earth, from coasts and oceans to jungles and freshwater. Stunning wildlife footage plays on a continuous loop.' },
+  { names: ['Bobs Burgers'], title: 'Bob’s Burgers', description: 'Bob Belcher and his family run a struggling burger restaurant and always find a way to keep the grill on. Bob’s Burgers episodes play non-stop.' },
+  { names: ['Guardians of the Galaxy'], title: 'Guardians of the Galaxy', logo: 'https://upload.wikimedia.org/wikipedia/commons/e/e2/Guardians_of_the_Galaxy-Logo.png?utm_source=commons.wikimedia.org&utm_campaign=index&utm_content=original', description: 'Peter Quill and his ragtag team of cosmic misfits save the galaxy on repeat. The Guardians of the Galaxy films, from Vol. 1 to Vol. 3, play back to back.' },
+  { names: ['John Wick'], title: 'John Wick', logo: 'https://www.nicepng.com/png/detail/106-1060357_john-wick-image-john-wick-movie-png.png', description: 'A legendary hitman is dragged back into the underworld he left behind. The John Wick films play back to back.' },
+  { names: ['The Simpsons'], title: 'The Simpsons', description: 'Homer, Marge, Bart, Lisa and Maggie cause chaos in Springfield. The Simpsons play non-stop, one season on a loop.' },
+  { names: ['Cosmos A Spacetime Odyssey'], title: 'Cosmos: A Spacetime Odyssey', logo: 'https://play-lh.googleusercontent.com/VSCDrcHOSRLdsIWXX3al31W_dzexLRK8NiFnCazEMZOgLkKOYuUKMwxNkYFR62ykTqI', description: 'Neil deGrasse Tyson hosts a journey through space and time, from the Big Bang to the far future. The 2014 series plays on a continuous loop.' },
+  { names: ['The Hobbit And Lord Of TheRings', 'The Hobbit and Lord of the Rings'], title: 'The Lord of the Rings & The Hobbit', logo: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTCGgkHg567OSfQSca0q1jzuCyTZq6dYatCZX4zM8_11xRDh9EGbjhQqG_5&s=10', description: 'The Lord of the Rings and The Hobbit films on repeat, around the clock.' },
+  { names: ['Pirates Of The Caribbean'], title: 'Pirates of the Caribbean', description: 'Captain Jack Sparrow sets sail on repeat. The Pirates of the Caribbean films play back to back, from The Curse of the Black Pearl to Dead Men Tell No Tales.' },
+  { names: ['Despicable Me'], title: 'Despicable Me', logo: 'https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/Despicable_Me_logo_2.svg/1280px-Despicable_Me_logo_2.svg.png?utm_source=en.wikipedia.org&utm_campaign=index&utm_content=thumbnail', description: 'Gru, his adopted girls and a legion of Minions cause mischief on repeat. The Despicable Me films play back to back.' },
+  { names: ['Oceans Eleven', 'Ocean’s Eleven'], title: 'Ocean’s Eleven', logo: 'https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ee/Oceanseleven-logo.svg/1280px-Oceanseleven-logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=index&utm_content=thumbnail', description: 'Danny Ocean and his crew plan the ultimate casino heists. The Ocean’s films play back to back.' },
+  { names: ['Band of Brothers'], title: 'Band of Brothers', logo: 'https://pixel.disco.nowtv.com/uuid/74bdea81-648d-3d35-8a92-38881ffeabe7/LOGO_TITLE_WIDE?language=en-GB&proposition=NOWOTT&version=957cfa0b-5ec4-3d80-9fa6-66e9c85bad2c', description: 'The acclaimed miniseries follows Easy Company of the US 101st Airborne through World War II, from training to the end of the war. Episodes play on a continuous loop.' },
+  { names: ['Transformers'], title: 'Transformers', logo: 'https://logos-world.net/wp-content/uploads/2021/11/Transformers-Logo-2014-present.png', description: 'Autobots and Decepticons battle for the fate of Earth. The Transformers films play back to back.' },
+  { names: ['Mission Impossible'], title: 'Mission: Impossible', logo: 'https://static.wikia.nocookie.net/logopedia/images/7/75/Img_0940.png/revision/latest?cb=20160718234043', description: 'Ethan Hunt and the IMF take on impossible missions around the globe. The Mission: Impossible films play non-stop.' },
+  { names: ['Home Alone'], title: 'Home Alone', logo: 'https://cdn.prod.website-files.com/61e1db1c178256e11be974b0/63946895bada47049d45a3ea_zQMNXH4rg8MFovQCr-qMQQwx9shwNo32EHB_custom_logo.webp', description: 'Kevin McCallister defends the house against two bumbling burglars. The Home Alone films play on repeat.' },
+  { names: ['Game of Thrones'], title: 'Game of Thrones', description: 'Great houses fight for the Iron Throne across Westeros. Game of Thrones plays on a continuous loop, one season at a time.' },
+  { names: ['Thor'], title: 'Thor', logo: 'https://1000logos.net/wp-content/uploads/2023/06/Thor-Logo-2011.png', description: 'The God of Thunder wields Mjolnir to protect Asgard and Earth. The Thor films play back to back.' },
+  { names: ['The Bourne'], title: 'The Bourne Films', logo: 'https://upload.wikimedia.org/wikipedia/commons/a/a5/Bourne_logo.png?utm_source=commons.wikimedia.org&utm_campaign=index&utm_content=original', description: 'Jason Bourne, an amnesiac agent, hunts for his true identity while the CIA hunts him. The Bourne films play back to back.' },
+  { names: ['How To Train Your Dragon'], title: 'How to Train Your Dragon', description: 'Hiccup and his dragon Toothless change the world of Vikings and dragons. The How to Train Your Dragon films play on repeat.' },
+  { names: ['Toy Story'], title: 'Toy Story', description: 'Woody, Buzz Lightyear and the toys come alive when no one is watching. The Toy Story films play back to back.' },
+  { names: ['Men in Black'], title: 'Men in Black', logo: 'https://upload.wikimedia.org/wikipedia/commons/8/83/Men_In_Black_%28film_franchise%29_logo.svg?utm_source=en.wikipedia.org&utm_campaign=index&utm_content=original', description: 'Agents J and K police the aliens living among us. The Men in Black films play non-stop.' },
+  { names: ['Ace Ventura'], title: 'Ace Ventura', description: 'Jim Carrey is the wildly unconventional pet detective. The Ace Ventura films play on repeat.' },
+  { names: ['Futurama'], title: 'Futurama', description: 'Fry, Leela and Bender deliver packages across the universe in the 31st century. Futurama episodes play non-stop, one season on a loop.' },
+  { names: ['Its Always Sunny in Philadelphia'], title: 'It’s Always Sunny in Philadelphia', description: 'The gang at Paddy’s Pub scheme and squabble their way through Philadelphia. It’s Always Sunny plays non-stop, one season on a loop.' },
+  { names: ['300'], title: '300', logo: 'https://upload.wikimedia.org/wikipedia/fr/2/27/300_%28film%29_Logo.png?utm_source=fr.wikipedia.org&utm_campaign=index&utm_content=original', description: 'King Leonidas and his Spartans make a last stand against the Persian army. 300 and its follow-up play back to back.' },
+  { names: ['The Hangover'], title: 'The Hangover', description: 'Three friends wake up after a Las Vegas bachelor party with no memory of the night before. The Hangover films play back to back.' },
+  { names: ['Spider Man', 'Spider-Man'], title: 'Spider-Man', description: 'Peter Parker swings through New York as your friendly neighbourhood hero. Spider-Man films play on repeat.' },
+  { names: ['Wreck It Ralph'], title: 'Wreck-It Ralph', logo: 'https://upload.wikimedia.org/wikipedia/en/6/6c/Wreck-It_Ralph_logo.svg?utm_source=en.wikipedia.org&utm_campaign=index&utm_content=original', description: 'An arcade villain sets out to prove he can be a hero. Wreck-It Ralph and Ralph Breaks the Internet play back to back.' },
+  { names: ['Tron'], title: 'Tron', logo: 'https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ee/Tron_franchise_logo.svg/330px-Tron_franchise_logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail', description: 'Inside a digital world, programs fight for survival on the Grid. Tron and Tron: Legacy play back to back.' },
+  { names: ['Austin Powers'], title: 'Austin Powers', logo: 'https://d1yjjnpx0p53s8.cloudfront.net/styles/logo-thumbnail/s3/0015/4049/brand.gif?itok=s8rWnnZO', description: 'Mike Myers is the groovy British spy out to stop Dr. Evil. The Austin Powers films play non-stop.' },
+  { names: ['The Mandalorian'], title: 'The Mandalorian', description: 'A lone bounty hunter guards the Child across the Star Wars galaxy. The Mandalorian plays on a continuous loop, one season at a time.' },
+  { names: ['The Blue Planet 2001', 'The Blue Planet'], title: 'The Blue Planet', description: 'David Attenborough explores the world’s oceans, from sunlit shallows to the deepest trenches. The landmark nature series plays on a continuous loop.' },
+  { names: ['Aladdin'], title: 'Aladdin', description: 'A street kid, a magic lamp and a wisecracking Genie. Aladdin plays on repeat.' },
+  { names: ['Peppa Pig'], title: 'Peppa Pig', logo: 'https://images.pluto.tv/channels/5d14fb6c84dd37df3b4290c5/colorLogoPNG_1730733871298.png', description: 'Peppa, George and their family jump in muddy puddles and enjoy everyday adventures. Peppa Pig episodes play non-stop.' },
+  { names: ['DISNEY Movies'], title: 'Disney Movies', logo: 'https://images.seeklogo.com/logo-png/4/2/disney-logo-png_seeklogo-41972.png', description: 'A non-stop run of Disney films, from Aladdin and The Lion King to Frozen and Moana. Classic and modern animated favourites for the whole family.' },
+  { names: ['BLUEY'], title: 'Bluey', logo: 'https://upload.wikimedia.org/wikipedia/commons/a/ad/TV_logo_for_Bluey.png', description: 'Bluey and her family turn everyday life into imaginative play. Bluey episodes play non-stop.' },
+  { names: ['Avengers'], title: 'Avengers', logo: 'https://logos-world.net/wp-content/uploads/2020/05/The-Avengers-Logo-2012.jpg', description: 'Earth’s mightiest heroes assemble to save the world. The Avengers films play back to back.' },
+  { names: ['LAW & ORDER'], title: 'Law & Order', description: 'Detectives investigate and prosecutors try the crimes in New York. Law & Order episodes play non-stop.' },
+  { names: ['WILL FERRELL MOVIES'], title: 'Will Ferrell Movies', description: 'Will Ferrell’s comedies play back to back, from Elf and Anchorman to Step Brothers and Talladega Nights.' },
+  { names: ['WAR MOVIES'], title: 'War Movies', description: 'War films play non-stop, from World War II epics to modern combat dramas.' },
+  { names: ['BREAKING BAD'], title: 'Breaking Bad', description: 'A chemistry teacher turns to making methamphetamine after a cancer diagnosis, and the consequences spiral. Breaking Bad plays on a continuous loop.' },
+  { names: ['ROBIN WILLIAMS'], title: 'Robin Williams', description: 'Films starring Robin Williams play back to back, from Mrs. Doubtfire and Jumanji to Good Will Hunting.' }
+];
+
+const TWENTY_FOUR_SEVEN_FIXES = Object.fromEntries(
+  TWENTY_FOUR_SEVEN_CURATED.flatMap((entry) => entry.names.map((name) => [titleKey(name), entry]))
+);
 
 const ROMAN_NUMERAL = /^(?=[IVXLC]+$)C{0,3}(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/;
 
