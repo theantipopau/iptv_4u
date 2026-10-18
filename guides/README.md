@@ -41,6 +41,12 @@ The provider's 35 interchangeable "Stan Sport AU Event 1-35" slots, filled from 
 
 **Use it**: paste `https://raw.githubusercontent.com/theantipopau/iptv_4u/main/guides/stan-sport.xml` into the "Your own EPG/guide URL(s)" field, re-match, and publish. **Regenerate**: `node scripts/stan_events.mjs guides/stan-sport.xml` (the daily workflow does this).
 
+## custom-logos.xml
+
+Channel-only guide (no programmes) holding the 26 custom 24/7 logos that were hand-picked in the app, so re-running auto-match picks them up instead of needing each one redone. Same format as the app's "Backlog" export. It was extracted from the published playlist (every 24/7 channel whose logo isn't the provider's own or a TMDB poster). Matching is by the channel's `tvg-id`, so it only needs the 24/7 entries' ids to stay the same.
+
+**Use it**: add `https://raw.githubusercontent.com/theantipopau/iptv_4u/main/guides/custom-logos.xml` to "Your own EPG/guide URL(s)". **Add more later**: use the app's Backlog export after fixing a channel and merge its `<channel>` entries into this file. Not auto-regenerated.
+
 ## South Africa (SuperSport) — no repo file needed
 
 Unlike the guides above, `epgshare01`'s South Africa file (`epg_ripper_ZA1.xml.gz`, ~2.9MB decompressed) already fits comfortably under the 15MB cap as-is, so there's nothing to trim or commit — paste `https://epgshare01.online/epgshare01/epg_ripper_ZA1.xml.gz` directly into the "Your own EPG/guide URL(s)" field. It carries the full DStv SuperSport lineup (channels 200-215, 236) with real schedules — Blitz, Grandstand, PSL, Premier League, LaLiga, Football, Football Plus, Variety 2-4, Action, Rugby, Cricket, Golf, Tennis, Motorsport, WWE — plus Racing 240.

@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tv generator-info-name="iptv-4u custom logos (24/7 channels)">
+  <channel id="24/7 Iron Man [VIP]">
+    <display-name>24/7 Iron Man [VIP]</display-name>
+    <icon src="https://logos-world.net/wp-content/uploads/2020/12/Iron-Man-Logo-2008.png"/>
+  </channel>
+  <channel id="24/7 Star Trek [VIP]">
+    <display-name>24/7 Star Trek [VIP]</display-name>
+    <icon src="https://i.imgur.com/8cvXYiT.png"/>
+  </channel>
+  <channel id="24/7 Planet Earth II [VIP]">
+    <display-name>24/7 Planet Earth II [VIP]</display-name>
+    <icon src="https://i.imgur.com/mzL9YOP.png"/>
+  </channel>
+  <channel id="24/7 Guardians of the Galaxy [VIP]">
+    <display-name>24/7 Guardians of the Galaxy [VIP]</display-name>
+    <icon src="https://upload.wikimedia.org/wikipedia/commons/e/e2/Guardians_of_the_Galaxy-Logo.png?utm_source=commons.wikimedia.org&amp;utm_campaign=index&amp;utm_content=original"/>
+  </channel>
+  <channel id="24/7 John Wick [VIP]">
+    <display-name>24/7 John Wick [VIP]</display-name>
+    <icon src="https://www.nicepng.com/png/detail/106-1060357_john-wick-image-john-wick-movie-png.png"/>
+  </channel>
+  <channel id="24/7 Cosmos A Spacetime Odyssey [VIP]">
+    <display-name>24/7 Cosmos A Spacetime Odyssey [VIP]</display-name>
+    <icon src="https://play-lh.googleusercontent.com/VSCDrcHOSRLdsIWXX3al31W_dzexLRK8NiFnCazEMZOgLkKOYuUKMwxNkYFR62ykTqI"/>
+  </channel>
+  <channel id="24/7 Planet Earth III [VIP]">
+    <display-name>24/7 Planet Earth III [VIP]</display-name>
+    <icon src="https://i.imgur.com/mzL9YOP.png"/>
+  </channel>
+  <channel id="24/7 The Hobbit And Lord Of TheRings [VIP]">
+    <display-name>24/7 The Hobbit And Lord Of TheRings [VIP]</display-name>
+    <icon src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTCGgkHg567OSfQSca0q1jzuCyTZq6dYatCZX4zM8_11xRDh9EGbjhQqG_5&amp;s=10"/>
+  </channel>
+  <channel id="24/7 Despicable Me [VIP]">
+    <display-name>24/7 Despicable Me [VIP]</display-name>
+    <icon src="https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/Despicable_Me_logo_2.svg/1280px-Despicable_Me_logo_2.svg.png?utm_source=en.wikipedia.org&amp;utm_campaign=index&amp;utm_content=thumbnail"/>
+  </channel>
+  <channel id="24/7 Oceans Eleven [VIP]">
+    <display-name>24/7 Oceans Eleven [VIP]</display-name>
+    <icon src="https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ee/Oceanseleven-logo.svg/1280px-Oceanseleven-logo.svg.png?utm_source=commons.wikimedia.org&amp;utm_campaign=index&amp;utm_content=thumbnail"/>
+  </channel>
+  <channel id="24/7 Band of Brothers [VIP]">
+    <display-name>24/7 Band of Brothers [VIP]</display-name>
+    <icon src="https://pixel.disco.nowtv.com/uuid/74bdea81-648d-3d35-8a92-38881ffeabe7/LOGO_TITLE_WIDE?language=en-GB&amp;proposition=NOWOTT&amp;version=957cfa0b-5ec4-3d80-9fa6-66e9c85bad2c"/>
+  </channel>
+  <channel id="24/7 Transformers [VIP]">
+    <display-name>24/7 Transformers [VIP]</display-name>
+    <icon src="https://logos-world.net/wp-content/uploads/2021/11/Transformers-Logo-2014-present.png"/>
+  </channel>
+  <channel id="24/7 Mission Impossible [VIP]">
+    <display-name>24/7 Mission Impossible [VIP]</display-name>
+    <icon src="https://static.wikia.nocookie.net/logopedia/images/7/75/Img_0940.png/revision/latest?cb=20160718234043"/>
+  </channel>
+  <channel id="24/7 Home Alone [VIP]">
+    <display-name>24/7 Home Alone [VIP]</display-name>
+    <icon src="https://cdn.prod.website-files.com/61e1db1c178256e11be974b0/63946895bada47049d45a3ea_zQMNXH4rg8MFovQCr-qMQQwx9shwNo32EHB_custom_logo.webp"/>
+  </channel>
+  <channel id="24/7 Thor [VIP]">
+    <display-name>24/7 Thor [VIP]</display-name>
+    <icon src="https://1000logos.net/wp-content/uploads/2023/06/Thor-Logo-2011.png"/>
+  </channel>
+  <channel id="24/7 The Bourne [VIP]">
+    <display-name>24/7 The Bourne [VIP]</display-name>
+    <icon src="https://upload.wikimedia.org/wikipedia/commons/a/a5/Bourne_logo.png?utm_source=commons.wikimedia.org&amp;utm_campaign=index&amp;utm_content=original"/>
+  </channel>
+  <channel id="24/7 Men in Black [VIP]">
+    <display-name>24/7 Men in Black [VIP]</display-name>
+    <icon src="https://upload.wikimedia.org/wikipedia/commons/8/83/Men_In_Black_%28film_franchise%29_logo.svg?utm_source=en.wikipedia.org&amp;utm_campaign=index&amp;utm_content=original"/>
+  </channel>
+  <channel id="24/7 300 [VIP]">
+    <display-name>24/7 300 [VIP]</display-name>
+    <icon src="https://upload.wikimedia.org/wikipedia/fr/2/27/300_%28film%29_Logo.png?utm_source=fr.wikipedia.org&amp;utm_campaign=index&amp;utm_content=original"/>
+  </channel>
+  <channel id="24/7 Wreck It Ralph [VIP]">
+    <display-name>24/7 Wreck It Ralph [VIP]</display-name>
+    <icon src="https://upload.wikimedia.org/wikipedia/en/6/6c/Wreck-It_Ralph_logo.svg?utm_source=en.wikipedia.org&amp;utm_campaign=index&amp;utm_content=original"/>
+  </channel>
+  <channel id="24/7 Tron [VIP]">
+    <display-name>24/7 Tron [VIP]</display-name>
+    <icon src="https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ee/Tron_franchise_logo.svg/330px-Tron_franchise_logo.svg.png?utm_source=en.wikipedia.org&amp;utm_campaign=parser&amp;utm_content=thumbnail"/>
+  </channel>
+  <channel id="24/7 Austin Powers [VIP]">
+    <display-name>24/7 Austin Powers [VIP]</display-name>
+    <icon src="https://d1yjjnpx0p53s8.cloudfront.net/styles/logo-thumbnail/s3/0015/4049/brand.gif?itok=s8rWnnZO"/>
+  </channel>
+  <channel id="24/7 Peppa Pig Season 6 [VIP]">
+    <display-name>24/7 Peppa Pig Season 6 [VIP]</display-name>
+    <icon src="https://images.pluto.tv/channels/5d14fb6c84dd37df3b4290c5/colorLogoPNG_1730733871298.png"/>
+  </channel>
+  <channel id="tmdb-celebrating-100-disney-channel-original-movies">
+    <display-name>24/7 DISNEY Movies</display-name>
+    <icon src="https://images.seeklogo.com/logo-png/4/2/disney-logo-png_seeklogo-41972.png"/>
+  </channel>
+  <channel id="Bluey.uk">
+    <display-name>24/7 BLUEY</display-name>
+    <icon src="https://upload.wikimedia.org/wikipedia/commons/a/ad/TV_logo_for_Bluey.png"/>
+  </channel>
+  <channel id="24/7 Avengers [VIP]">
+    <display-name>24/7 Avengers [VIP]</display-name>
+    <icon src="https://logos-world.net/wp-content/uploads/2020/05/The-Avengers-Logo-2012.jpg"/>
+  </channel>
+  <channel id="PeppaPig.us">
+    <display-name>24/7 PEPPA PIG</display-name>
+    <icon src="https://images.pluto.tv/channels/5d14fb6c84dd37df3b4290c5/colorLogoPNG_1730733871298.png"/>
+  </channel>
+</tv>
