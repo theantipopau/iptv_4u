@@ -45,7 +45,7 @@ The provider's 35 interchangeable "Stan Sport AU Event 1-35" slots, filled from 
 
 Channel-only guide (no programmes) holding the 26 custom 24/7 logos that were hand-picked in the app, so re-running auto-match picks them up instead of needing each one redone. Same format as the app's "Backlog" export. It was extracted from the published playlist (every 24/7 channel whose logo isn't the provider's own or a TMDB poster). Matching is by the channel's `tvg-id`, so it only needs the 24/7 entries' ids to stay the same.
 
-**Use it**: add `https://raw.githubusercontent.com/theantipopau/iptv_4u/main/guides/custom-logos.xml` to "Your own EPG/guide URL(s)". **Add more later**: use the app's Backlog export after fixing a channel and merge its `<channel>` entries into this file. Not auto-regenerated.
+**Use it**: add `https://raw.githubusercontent.com/theantipopau/iptv_4u/main/guides/custom-logos.xml` to "Your own EPG/guide URL(s)". **Add more later**: use the app's Backlog export after fixing a channel and merge its `<channel>` entries into this file. Not auto-regenerated. Any guide file with "logos" in its name is treated as hand-picked: its logos win over catalog ones.
 
 ## South Africa (SuperSport) — no repo file needed
 

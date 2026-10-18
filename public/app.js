@@ -245,6 +245,8 @@ function pickLogoUrl(matches, identityMatch) {
   if (!confident.length) return identityMatch.logoUrl || null;
   // Prefer a curated public-catalog logo over a scraped custom/worker
   // EPG's own icon, which is frequently just a generic placeholder.
+  const curated = confident.find((m) => m.curatedLogo);
+  if (curated) return curated.logoUrl;
   const catalogMatch = confident.find((m) => m.sourceType === 'iptv-org-api');
   return (catalogMatch || confident[0]).logoUrl;
 }

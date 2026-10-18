@@ -359,6 +359,9 @@ export async function searchChannel(cache, apiKey, { channelName, tvgId, groupTi
           // Only offer a guide merge when this specific channel actually
           // has programme data in this source — a channel node existing
           // isn't a promise of that (see loadSourceChannels).
+          // A guide file with "logos" in its name (guides/custom-logos.xml) is the
+          // user's hand-picked logo list: its icons beat catalog/placeholder ones.
+          curatedLogo: /logos?[^/]*.xml$/i.test(source.guideUrl || ''),
           guideUrl: sc.hasSchedule ? source.guideUrl : null,
           channelsUrl: source.channelsUrl,
           logoUrl: sc.logoUrl || null,
