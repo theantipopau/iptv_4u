@@ -31,7 +31,10 @@ import {
   buildLogoMap,
   searchIptvApi,
   matchAliasRegistry,
-  parseCustomGuideUrls
+  parseCustomGuideUrls,
+  getRegistryAliasNames,
+  guideChannelCountry,
+  applyCountryAdjustment
 } from './core.js';
 import { fetchWithTimeout, fetchTextMaybeGzip, fetchGuideSubset, runWithConcurrency } from './fetch-utils.js';
 import {
@@ -327,13 +330,21 @@ export async function searchChannel(cache, apiKey, { channelName, tvgId, groupTi
       for (const sc of sourceChannels) {
         if (isTwentyFourSeven && !cleanTitleForLookup(sc.name)) continue;
 
-        let score = isTwentyFourSeven
-          ? scoreMatch(cleanedTitle, sc.name)
-          : Math.max(
-              scoreMatch(channelName, sc.name),
-              scoreMatch(channelName, sc.id),
-              scoreMatch(cleanedTitle, sc.name)
-            );
+        // Registry aliases too (e.g. "Fox Sports 502" for FoxLeague.au), so a
+        // provider's own numbering or typos still reach the guide channel.
+        const names = [sc.name, ...getRegistryAliasNames(sc.id)];
+        let score = 0;
+        for (const name of names) {
+          score = Math.max(score, isTwentyFourSeven
+            ? scoreMatch(cleanedTitle, name)
+            : Math.max(
+                scoreMatch(channelName, name),
+                scoreMatch(channelName, sc.id),
+                scoreMatch(cleanedTitle, name)
+              ));
+        }
+        // A "US: ESPN" must not take the AU ESPN schedule just because the names match.
+        score = applyCountryAdjustment(score, countryHint, guideChannelCountry(sc.id, source.guideUrl));
         if (normalizedTvgId && sc.id && sc.id.toLowerCase() === normalizedTvgId) {
           score = 1;
         }

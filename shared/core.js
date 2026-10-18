@@ -415,6 +415,16 @@ export function extractCountryHint(text) {
   return null;
 }
 
+// Country of a custom-guide channel, for applyCountryAdjustment: from an id
+// suffix ("ESPN.au", "CNN.HD.us2"), else from a country-prefixed guide file
+// name (guides/nz-sky-sport.xml has bare numeric ids).
+export function guideChannelCountry(channelId, guideUrl) {
+  const fromId = /\.([a-z]{2})\d?$/i.exec(channelId || '');
+  if (fromId) return fromId[1];
+  const fromUrl = /\/(au|uk|us|nz|za)-[^/]*$/i.exec(guideUrl || '');
+  return fromUrl ? fromUrl[1] : null;
+}
+
 export function applyCountryAdjustment(score, queryCountry, candidateCountry) {
   if (!queryCountry || !candidateCountry) return score;
   // iptv-org's own data literally uses "UK" as a country value in places
@@ -559,7 +569,7 @@ export function buildLogoMap(logos) {
 export const CHANNEL_ALIAS_REGISTRY = [
   // --- Australia: Fox Sports / Kayo ---
   { id: 'FoxSportsNews.au', country: 'AU', canonicalName: 'Fox Sports News', channelNumber: '500', aliases: [], platformNames: { kayo: 'Kayo Sports News' }, providerEpgIds: [] },
-  { id: 'FoxCricket.au', country: 'AU', canonicalName: 'Fox Cricket', channelNumber: '501', aliases: ['Fox Sports 1', 'FS1'], platformNames: { kayo: 'Kayo Cricket' }, providerEpgIds: [] },
+  { id: 'FoxCricket.au', country: 'AU', canonicalName: 'Fox Cricket', channelNumber: '501', aliases: ['Fox Sports 1', 'Fox Sports 501', 'FS1'], platformNames: { kayo: 'Kayo Cricket' }, providerEpgIds: [] },
   { id: 'FoxLeague.au', country: 'AU', canonicalName: 'Fox League', channelNumber: '502', aliases: ['Fox Sports 2', 'Fox Sports 502', 'FS2'], platformNames: { kayo: 'Kayo League' }, providerEpgIds: [] },
   { id: 'FoxSports503.au', country: 'AU', canonicalName: 'Fox Sports 503', channelNumber: '503', aliases: ['Fox Sports 3', 'FS3'], platformNames: {}, providerEpgIds: [] },
   { id: 'FoxFooty.au', country: 'AU', canonicalName: 'Fox Footy', channelNumber: '504', aliases: ['Fox Sports 4', 'Fox Sports 504', 'FS4'], platformNames: { kayo: 'Kayo Footy' }, providerEpgIds: [] },
@@ -631,7 +641,7 @@ function registryDisplayAliases(entry) {
 // "Kayo League" match the catalog's "Fox League" entry (which upstream
 // carries no alt_names of its own for this), while keeping that entry's
 // real logo/metadata as the winning candidate rather than a duplicate.
-function getRegistryAliasNames(channelId) {
+export function getRegistryAliasNames(channelId) {
   const entry = ALIAS_REGISTRY_BY_ID.get(channelId);
   return entry ? registryDisplayAliases(entry) : [];
 }

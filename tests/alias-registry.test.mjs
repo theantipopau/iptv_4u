@@ -82,3 +82,12 @@ describe('scoreMatch precedence sanity (registry aliases outscore incidental fuz
     assert.ok(exact < viaAlias);
   });
 });
+
+test('guideChannelCountry reads an id suffix, else a country-prefixed guide file name', async () => {
+  const { guideChannelCountry } = await import('../shared/core.js');
+  assert.equal(guideChannelCountry('ESPN.au', ''), 'au');
+  assert.equal(guideChannelCountry('CNN.HD.us2', ''), 'us');
+  assert.equal(guideChannelCountry('61', 'https://x/guides/nz-sky-sport.xml'), 'nz');
+  assert.equal(guideChannelCountry('espn.us', 'http://epg.mybunny.tv/btv/abc'), 'us');
+  assert.equal(guideChannelCountry('AU: FOX SPORTS 501', 'http://epg.mybunny.tv/btv/abc'), null);
+});
