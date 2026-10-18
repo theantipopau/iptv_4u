@@ -474,6 +474,8 @@ function splitTwentyFourSeven(name) {
   s = s.replace(/[([][^)\]]*[)\]]/g, ' ');
   s = s.replace(TWENTY_FOUR_SEVEN_REPLACE_RE, ' ');
   s = s.replace(/\b(FHD|UHD|HD|SD|4K|HEVC|H265|H264|VIP)\b/gi, ' ');
+  // The provider also lists these as "<Film> Movie Collection".
+  s = s.replace(/\bmovie\s+collection\b/gi, ' ');
   s = s.replace(/^[A-Za-z]{2,3}\s*[:|-]\s*/, ' ');
   s = s.replace(/[|_]/g, ' ');
   s = s.replace(/\bS0*(\d{1,2})\b/gi, 'Season $1');
@@ -560,6 +562,7 @@ const TWENTY_FOUR_SEVEN_CURATED = [
   { names: ['WILL FERRELL MOVIES'], title: 'Will Ferrell Movies', description: 'Will Ferrell’s comedies play back to back, from Elf and Anchorman to Step Brothers and Talladega Nights.' },
   { names: ['WAR MOVIES'], title: 'War Movies', description: 'War films play non-stop, from World War II epics to modern combat dramas.' },
   { names: ['BREAKING BAD'], title: 'Breaking Bad', description: 'A chemistry teacher turns to making methamphetamine after a cancer diagnosis, and the consequences spiral. Breaking Bad plays on a continuous loop.' },
+  { names: ['Peacock Live Dateline', 'Dateline'], title: 'Dateline', description: 'True-crime investigations and mysteries from NBC’s Dateline, playing around the clock.' },
   { names: ['ROBIN WILLIAMS'], title: 'Robin Williams', description: 'Films starring Robin Williams play back to back, from Mrs. Doubtfire and Jumanji to Good Will Hunting.' }
 ];
 

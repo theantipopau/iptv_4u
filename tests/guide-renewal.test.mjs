@@ -260,3 +260,10 @@ test('channels with no schedule anywhere get a labelled placeholder, and are rep
   assert.match(result.xml, /<title[^>]*>Sky News Australia<\/title>/);
   assert.match(result.xml, /placeholder/);
 });
+
+test('"<Film> Movie Collection" names resolve to the same curated entry', async () => {
+  const { twentyFourSevenCurated, twentyFourSevenTitle } = await import('../shared/core.js');
+  assert.equal(twentyFourSevenTitle('24/7 Harry Poter Movie Collection [VIP]'), 'Harry Potter');
+  assert.match(twentyFourSevenCurated('24/7 Star Trek Movie Collection [VIP]').description, /Enterprise/);
+  assert.ok(twentyFourSevenCurated('24/7 Transformers Movie Collection [VIP]').logo);
+});
