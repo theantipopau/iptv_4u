@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tv generator-info-name="TheSportsDB Stan Sport AU schedule (slot assignment is a guess)">
+  <channel id="Stan Sport AU Event 1"><display-name>Stan Sport AU Event 1</display-name></channel>
+  <channel id="Stan Sport AU Event 2"><display-name>Stan Sport AU Event 2</display-name></channel>
+  <channel id="Stan Sport AU Event 3"><display-name>Stan Sport AU Event 3</display-name></channel>
+  <channel id="Stan Sport AU Event 4"><display-name>Stan Sport AU Event 4</display-name></channel>
+  <channel id="Stan Sport AU Event 5"><display-name>Stan Sport AU Event 5</display-name></channel>
+  <channel id="Stan Sport AU Event 6"><display-name>Stan Sport AU Event 6</display-name></channel>
+  <channel id="Stan Sport AU Event 7"><display-name>Stan Sport AU Event 7</display-name></channel>
+  <channel id="Stan Sport AU Event 8"><display-name>Stan Sport AU Event 8</display-name></channel>
+  <channel id="Stan Sport AU Event 9"><display-name>Stan Sport AU Event 9</display-name></channel>
+  <channel id="Stan Sport AU Event 10"><display-name>Stan Sport AU Event 10</display-name></channel>
+  <channel id="Stan Sport AU Event 11"><display-name>Stan Sport AU Event 11</display-name></channel>
+  <channel id="Stan Sport AU Event 12"><display-name>Stan Sport AU Event 12</display-name></channel>
+  <channel id="Stan Sport AU Event 13"><display-name>Stan Sport AU Event 13</display-name></channel>
+  <channel id="Stan Sport AU Event 14"><display-name>Stan Sport AU Event 14</display-name></channel>
+  <channel id="Stan Sport AU Event 15"><display-name>Stan Sport AU Event 15</display-name></channel>
+  <channel id="Stan Sport AU Event 16"><display-name>Stan Sport AU Event 16</display-name></channel>
+  <channel id="Stan Sport AU Event 17"><display-name>Stan Sport AU Event 17</display-name></channel>
+  <channel id="Stan Sport AU Event 18"><display-name>Stan Sport AU Event 18</display-name></channel>
+  <channel id="Stan Sport AU Event 19"><display-name>Stan Sport AU Event 19</display-name></channel>
+  <channel id="Stan Sport AU Event 20"><display-name>Stan Sport AU Event 20</display-name></channel>
+  <channel id="Stan Sport AU Event 21"><display-name>Stan Sport AU Event 21</display-name></channel>
+  <channel id="Stan Sport AU Event 22"><display-name>Stan Sport AU Event 22</display-name></channel>
+  <channel id="Stan Sport AU Event 23"><display-name>Stan Sport AU Event 23</display-name></channel>
+  <channel id="Stan Sport AU Event 24"><display-name>Stan Sport AU Event 24</display-name></channel>
+  <channel id="Stan Sport AU Event 25"><display-name>Stan Sport AU Event 25</display-name></channel>
+  <channel id="Stan Sport AU Event 26"><display-name>Stan Sport AU Event 26</display-name></channel>
+  <channel id="Stan Sport AU Event 27"><display-name>Stan Sport AU Event 27</display-name></channel>
+  <channel id="Stan Sport AU Event 28"><display-name>Stan Sport AU Event 28</display-name></channel>
+  <channel id="Stan Sport AU Event 29"><display-name>Stan Sport AU Event 29</display-name></channel>
+  <channel id="Stan Sport AU Event 30"><display-name>Stan Sport AU Event 30</display-name></channel>
+  <channel id="Stan Sport AU Event 31"><display-name>Stan Sport AU Event 31</display-name></channel>
+  <channel id="Stan Sport AU Event 32"><display-name>Stan Sport AU Event 32</display-name></channel>
+  <channel id="Stan Sport AU Event 33"><display-name>Stan Sport AU Event 33</display-name></channel>
+  <channel id="Stan Sport AU Event 34"><display-name>Stan Sport AU Event 34</display-name></channel>
+  <channel id="Stan Sport AU Event 35"><display-name>Stan Sport AU Event 35</display-name></channel>
+  <programme start="20261018130000 +0000" stop="20261018150000 +0000" channel="Stan Sport AU Event 1"><title>Bournemouth vs Sunderland</title><desc>On Stan Sport at this time: Bournemouth vs Sunderland; Brighton and Hove Albion vs Crystal Palace; Leeds United vs Manchester United. Which Event slot carries which match is a best guess.</desc></programme>
+  <programme start="20261018130000 +0000" stop="20261018150000 +0000" channel="Stan Sport AU Event 2"><title>Brighton and Hove Albion vs Crystal Palace</title><desc>On Stan Sport at this time: Bournemouth vs Sunderland; Brighton and Hove Albion vs Crystal Palace; Leeds United vs Manchester United. Which Event slot carries which match is a best guess.</desc></programme>
+  <programme start="20261018130000 +0000" stop="20261018150000 +0000" channel="Stan Sport AU Event 3"><title>Leeds United vs Manchester United</title><desc>On Stan Sport at this time: Bournemouth vs Sunderland; Brighton and Hove Albion vs Crystal Palace; Leeds United vs Manchester United. Which Event slot carries which match is a best guess.</desc></programme>
+  <programme start="20261018153000 +0000" stop="20261018173000 +0000" channel="Stan Sport AU Event 1"><title>Nottingham Forest vs Arsenal</title><desc>On Stan Sport at this time: Nottingham Forest vs Arsenal. Which Event slot carries which match is a best guess.</desc></programme>
+  <programme start="20261019190000 +0000" stop="20261019210000 +0000" channel="Stan Sport AU Event 1"><title>Tottenham Hotspur vs Coventry City</title><desc>On Stan Sport at this time: Tottenham Hotspur vs Coventry City. Which Event slot carries which match is a best guess.</desc></programme>
+  <programme start="20261020164500 +0000" stop="20261020184500 +0000" channel="Stan Sport AU Event 1"><title>Fenerbahçe vs Slavia Prague</title><desc>On Stan Sport at this time: Fenerbahçe vs Slavia Prague. Which Event slot carries which match is a best guess.</desc></programme>
+</tv>

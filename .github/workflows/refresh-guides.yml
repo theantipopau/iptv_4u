@@ -91,11 +91,14 @@ jobs:
           node scripts/trim_epgshare.mjs /tmp/sky_full.xml guides/nz-sky-sport.xml "NZXMLTV Sky (trimmed to Sky Sport 1-9 + ESPN/ESPN2)" "^(5[0-9]|6[01])$" | tee /tmp/nz.log
           grep -q "kept channels: 12" /tmp/nz.log
 
+      - name: Refresh Stan Sport events (TheSportsDB schedule page)
+        run: node scripts/stan_events.mjs guides/stan-sport.xml
+
       - name: Commit and push if any guide actually changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add guides/au-fox-sports.xml guides/uk-major.xml guides/us-major.xml guides/nz-sky-sport.xml
+          git add guides/au-fox-sports.xml guides/uk-major.xml guides/us-major.xml guides/nz-sky-sport.xml guides/stan-sport.xml
           if git diff --cached --quiet; then
             echo "No guide changes (source data identical to what's already committed) — nothing to commit."
             exit 0
