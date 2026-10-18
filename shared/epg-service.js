@@ -355,6 +355,9 @@ export async function searchChannel(cache, apiKey, { channelName, tvgId, groupTi
         matches.push({
           sourceType: 'worker',
           source: source.name,
+          // Position in the user's list, so equal scores resolve in the order they
+          // listed their guides (sources finish loading in a random order).
+          sourceRank: sourceSlice.indexOf(source),
           score,
           channelName: sc.name,
           channelId: sc.id,
@@ -387,7 +390,7 @@ export async function searchChannel(cache, apiKey, { channelName, tvgId, groupTi
   const registryMatches = matchAliasRegistry(channelName, cleanedTitle, isTwentyFourSeven, countryHint);
 
   const all = [...workerMatches, ...apiMatches, ...registryMatches]
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.score - a.score || (a.sourceRank ?? 1e9) - (b.sourceRank ?? 1e9))
     .slice(0, 35);
 
   // iptv-org-api matches are metadata/logo only (canMergeGuide is always
