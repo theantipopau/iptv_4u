@@ -24,6 +24,7 @@ import {
 } from './shared/epg-service.js';
 import { buildHostedResponse } from './shared/serve.js';
 import { assertAdmin } from './shared/core.js';
+import { assertAdminAccess, checkAdminAccess, clearAdminSessionCookie, createAdminSession } from './shared/admin-session.js';
 import { createNodeCache } from './shared/node-cache.js';
 import { logEvent } from './shared/log.js';
 
@@ -73,7 +74,7 @@ app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] })
 function handle(fn) {
   return async (req, res) => {
     try {
-      const result = await fn(req);
+      const result = await fn(req, res);
       res.json({ ok: true, ...result });
     } catch (error) {
       // Stage-specific diagnostics, never a bare 500 with an opaque message:
@@ -90,7 +91,7 @@ function handle(fn) {
 
 app.get('/api/discover-sources', handle(async (req) => {
   const force = req.query.refresh === '1';
-  if (force) requireAdmin(req);
+  if (force) await requireAdmin(req);
   return discoverSources(cache, force);
 }));
 
@@ -106,11 +107,52 @@ app.post('/api/export-m3u', handle(async (req) => exportM3u(req.body)));
 
 app.post('/api/build-from-plan', handle(async (req) => buildPublication(cache, TMDB_API_KEY, req.body)));
 
-// Write routes below all check the admin token first (see assertAdmin).
-const requireAdmin = (req) => assertAdmin(req.get('X-Admin-Token'), process.env.ADMIN_TOKEN);
+// The admin page exchanges the token for an HttpOnly session cookie here; the
+// token itself is never stored where page scripts can read it. GET reports
+// whether this browser is signed in, DELETE signs it out. The cookie is only
+// marked Secure over https so local http://localhost development works.
+const isSecureRequest = (req) => req.secure || req.get('X-Forwarded-Proto') === 'https';
+
+app.post('/api/admin/session', handle(async (req, res) => {
+  const expected = process.env.ADMIN_TOKEN;
+  // No secret configured: writes are open, so there is nothing to unlock.
+  if (!expected) return { configured: false };
+  assertAdmin(req.body && req.body.token, expected);
+  const session = await createAdminSession(expected, { secure: isSecureRequest(req) });
+  res.set('Set-Cookie', session.cookie);
+  res.set('Cache-Control', 'no-store');
+  return { configured: true, expiresAt: new Date(session.expiresAt).toISOString() };
+}));
+
+// Whether this browser currently holds a usable session. The cookie is
+// HttpOnly, so the page cannot tell on its own and would otherwise have to
+// show a sign-out control that does nothing.
+app.get('/api/admin/session', handle(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const expected = process.env.ADMIN_TOKEN;
+  if (!expected) return { configured: false, signedIn: false };
+  const access = await checkAdminAccess({ cookieHeader: req.get('cookie'), adminToken: expected });
+  return { configured: true, signedIn: access.ok && access.via === 'session' };
+}));
+
+// Sign out. The cookie is HttpOnly, so only a response header can clear it.
+app.delete('/api/admin/session', handle(async (req, res) => {
+  res.set('Set-Cookie', clearAdminSessionCookie({ secure: isSecureRequest(req) }).cookie);
+  res.set('Cache-Control', 'no-store');
+  return {};
+}));
+
+// Write routes below all check the admin token first (see assertAdminAccess).
+const requireAdmin = async (req) => {
+  await assertAdminAccess({
+    headerToken: req.get('X-Admin-Token'),
+    cookieHeader: req.get('cookie'),
+    adminToken: process.env.ADMIN_TOKEN
+  });
+};
 
 app.post('/api/publish', handle(async (req) => {
-  requireAdmin(req);
+  await requireAdmin(req);
   return publishFiles(hostedStore, req.body.slug, req.body);
 }));
 
@@ -146,7 +188,7 @@ app.get('/api/health/epg/:slug', handle(async (req) => ({
 })));
 
 app.post('/api/upload-logo', handle(async (req) => {
-  requireAdmin(req);
+  await requireAdmin(req);
   return uploadLogoAsset(hostedStore, req.body);
 }));
 
@@ -158,14 +200,14 @@ app.get('/logo/:id', async (req, res) => {
 });
 
 app.post('/api/refresh-config', handle(async (req) => {
-  requireAdmin(req);
+  await requireAdmin(req);
   return { config: await saveRefreshConfig(hostedStore, req.body) };
 }));
 
 app.get('/api/refresh-config/:slug', handle(async (req) => ({ config: await getRefreshConfig(hostedStore, req.params.slug) })));
 
 app.post('/api/refresh-now', handle(async (req) => {
-  requireAdmin(req);
+  await requireAdmin(req);
   const config = await getRefreshConfig(hostedStore, req.body.slug);
   if (!config) {
     const error = new Error('No auto-refresh config saved for this slug yet — save one first.');

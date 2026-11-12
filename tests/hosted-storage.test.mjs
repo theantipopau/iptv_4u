@@ -224,6 +224,93 @@ describe('versioned publication', () => {
     assert.equal(manifest.activeVersion, first.version);
     assert.ok(store.names().length >= before);
   });
+
+  // Regression: once the manifest is written the publication is live, so a
+  // failure in the writes derived from it must not be reported as "nothing
+  // was published" — the new files are already what every reader resolves.
+  test('a failure writing the legacy copy after promotion is a warning, not a failed publish', async () => {
+    const store = memoryStore();
+    store.state.failWrites.add('hosted:versioned:m3u');
+
+    const result = await publishFiles(store, 'versioned', {
+      m3uContent: MINIMAL_M3U,
+      xmlContent: buildGuide({ ids: IDS, programmesPerChannel: 48 })
+    });
+
+    assert.ok(result.version);
+    assert.ok(result.warnings.map((warning) => warning.code).includes('PUBLISH_COMPAT_COPY_FAILED'));
+    const manifest = await store.getStale('hosted:versioned:manifest');
+    assert.equal(manifest.activeVersion, result.version, 'the publication is live');
+    const served = await resolveHostedFile(store, 'versioned', 'playlist');
+    assert.equal(served.source, 'version', 'readers resolve through the manifest, not the missing legacy copy');
+    assert.equal(served.content, MINIMAL_M3U);
+  });
+
+  test('a failed plan write is surfaced, and the published files stay live', async () => {
+    const store = memoryStore();
+    store.state.failWrites.add('plan:versioned');
+
+    const result = await publishFiles(store, 'versioned', {
+      m3uContent: MINIMAL_M3U,
+      xmlContent: buildGuide({ ids: IDS, programmesPerChannel: 48 }),
+      plan: { 'Example One': { channelId: 'example.one' } }
+    });
+
+    const warning = result.warnings.find((item) => item.code === 'PUBLISH_PLAN_NOT_SAVED');
+    assert.ok(warning, 'the unsaved plan is surfaced, not swallowed');
+    assert.match(warning.message, /auto-refresh/i);
+    assert.equal(await store.getStale('plan:versioned'), null);
+    assert.equal((await store.getStale('hosted:versioned:manifest')).activeVersion, result.version);
+  });
+
+  test('a failed manifest promotion still reports that nothing was published', async () => {
+    const store = memoryStore();
+    const now = Date.now();
+    const first = await publishFiles(store, 'versioned', {
+      m3uContent: MINIMAL_M3U,
+      xmlContent: buildGuide({ ids: IDS, programmesPerChannel: 48, now }),
+      now
+    });
+
+    // The promotion write is the boundary: it failing means the previous
+    // version is still the one being served.
+    store.state.failWrites.add('hosted:versioned:manifest');
+    await assert.rejects(
+      () => publishFiles(store, 'versioned', {
+        m3uContent: MINIMAL_M3U,
+        xmlContent: buildGuide({ ids: IDS, programmesPerChannel: 96, now }),
+        now: now + 1
+      }),
+      (error) => {
+        assert.equal(error.code, 'PUBLISH_STORAGE_WRITE_FAILED');
+        assert.match(error.message, /Nothing was published/);
+        return true;
+      }
+    );
+
+    assert.equal((await store.getStale('hosted:versioned:manifest')).activeVersion, first.version);
+  });
+
+  test('an unreadable refresh config does not fail a publish that already happened', async () => {
+    const store = memoryStore();
+    const getStale = store.getStale.bind(store);
+    store.getStale = async (name) => {
+      if (name === 'refresh-config:versioned') throw new Error('storage read failed');
+      return getStale(name);
+    };
+
+    const result = await publishFiles(store, 'versioned', {
+      m3uContent: MINIMAL_M3U,
+      xmlContent: buildGuide({ ids: IDS, programmesPerChannel: 48 })
+    });
+
+    assert.ok(result.version);
+    assert.equal(
+      result.warnings.some((warning) => warning.code === 'GUIDE_WILL_EXPIRE_WITHOUT_REFRESH'),
+      false,
+      'no renewal claim is made from a config it could not read'
+    );
+  });
 });
 
 describe('backwards compatibility and resolution', () => {

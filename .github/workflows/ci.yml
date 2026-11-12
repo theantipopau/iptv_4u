@@ -1,0 +1,40 @@
+name: CI
+
+# The Cloudflare deploy is built straight from this repo by its Git
+# integration, so a commit that breaks shared/ is live immediately — there is
+# no build step that would catch it first. Runs the same suite `npm test` does
+# locally; see README "Tests" for what each file covers.
+#
+# Guide snapshots are committed daily by refresh-guides.yml and contain no
+# code, so a push that only touches guides/ does not need a run.
+
+on:
+  push:
+    paths-ignore:
+      - 'guides/**'
+  pull_request:
+
+permissions:
+  contents: read
+
+# A burst of pushes to the same branch only needs the newest result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the test suite
+        run: npm test

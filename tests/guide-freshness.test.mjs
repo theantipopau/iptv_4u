@@ -422,6 +422,73 @@ describe('fixed time-of-day refresh', () => {
     assert.equal(schedule.nextRunAt, '2026-09-17T17:00:00.000Z');
   });
 
+  // Regression: a fixed-time config has no intervalKey, so its schedule reports
+  // intervalMs: null. The overdue check added that to the grace period and
+  // treated it as zero, so every daily-at config was "overdue" from two hours
+  // after each run until the next one — a permanent false AUTO_REFRESH_OVERDUE
+  // / SCHEDULER_NOT_OBSERVED alarm, and a daily false issue from the health
+  // workflow that watches those codes.
+  test('a daily-at schedule that ran this morning is not overdue for the rest of the day', async () => {
+    const store = memoryStore();
+    const now = Date.parse('2026-09-17T22:00:00Z'); // 08:00 Sydney
+    await publishSlug(store, 'evening', { hours: 240, now });
+    const config = await saveRefreshConfig(store, AT_3AM_SYDNEY);
+    await store.set('refresh-config:evening', {
+      ...config,
+      lastRunAt: Date.parse('2026-09-17T17:00:00Z'), // 03:00 the same morning
+      lastRunStatus: 'ok'
+    }, { ttlSeconds: null });
+
+    const report = await assessAllPublishedHealth(store, { now });
+    const row = rowFor(report, 'evening');
+    assert.equal(row.refresh.mode, 'daily-at');
+    assert.equal(row.renewal, 'auto', 'ran five hours ago: nothing has been missed');
+    assert.equal(codesOf(row.warnings).includes('AUTO_REFRESH_OVERDUE'), false);
+    assert.deepEqual(report.scheduler.overdue, []);
+    assert.equal(report.scheduler.observed, true);
+
+    // The single-slug view shares the same check and must agree.
+    const health = await assessPublishedHealth(store, 'evening', { now });
+    assert.equal(health.warnings.some((warning) => /has not run when it was due/.test(warning)), false);
+  });
+
+  test('a daily-at schedule that missed a whole day is still reported as overdue', async () => {
+    const store = memoryStore();
+    const now = Date.parse('2026-09-17T22:00:00Z'); // 08:00 Sydney
+    await publishSlug(store, 'evening', { hours: 240, now });
+    const config = await saveRefreshConfig(store, AT_3AM_SYDNEY);
+    await store.set('refresh-config:evening', {
+      ...config,
+      lastRunAt: Date.parse('2026-09-16T17:00:00Z'), // 03:00 the previous morning
+      lastRunStatus: 'ok'
+    }, { ttlSeconds: null });
+
+    const report = await assessAllPublishedHealth(store, { now });
+    const row = rowFor(report, 'evening');
+    assert.equal(row.renewal, 'overdue');
+    assert.ok(codesOf(row.warnings).includes('AUTO_REFRESH_OVERDUE'));
+    assert.deepEqual(report.scheduler.overdue, ['evening']);
+    assert.equal(report.scheduler.observed, false);
+  });
+
+  test('a daily-at config saved outside its hour is not overdue before its first run', async () => {
+    const store = memoryStore();
+    const now = Date.parse('2026-09-17T22:00:00Z'); // 08:00 Sydney
+    await publishSlug(store, 'evening', { hours: 240, now });
+    const config = await saveRefreshConfig(store, AT_3AM_SYDNEY);
+    // Saved at 05:00; the first run is 03:00 tomorrow, so a tick has not been
+    // missed yet — the old two-hour grace called this overdue.
+    await store.set('refresh-config:evening', { ...config, createdAt: now - 3 * HOUR_MS }, { ttlSeconds: null });
+
+    const report = await assessAllPublishedHealth(store, { now });
+    const row = rowFor(report, 'evening');
+    assert.equal(row.refresh.lastRunAt, null);
+    assert.equal(row.renewal, 'auto');
+    assert.deepEqual(report.scheduler.neverRun, ['evening']);
+    assert.equal(report.scheduler.observed, null, 'first run is hours away: not evidence either way');
+    assert.equal(report.warnings.some((warning) => warning.code === 'SCHEDULER_NOT_OBSERVED'), false);
+  });
+
   test('switching back to an interval clears the fixed time', async () => {
     const store = memoryStore();
     await saveRefreshConfig(store, AT_3AM_SYDNEY);

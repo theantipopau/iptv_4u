@@ -2,6 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- The player loads exactly two third-party scripts, both pinned and
+         integrity-checked below. This policy allows those two origins for
+         scripts and nothing else: no inline handlers, no eval, no wildcard.
+         Images, media and fetch/XHR stay broad because a playlist names
+         arbitrary provider hosts and the player must reach them directly
+         (there is no relay or proxy). A <meta> policy rather than a response
+         header so the Express dev server and Cloudflare's static assets
+         enforce the same thing from one source. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: http: https:; media-src 'self' blob: http: https:; connect-src 'self' http: https:; worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>IPTV 4U — Live Viewer</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -17,7 +29,7 @@
     <div id="offlineBanner" class="offline-banner" hidden>You're offline — live channels need a network connection. Previously loaded pages still work.</div>
     <header class="app-bar">
       <div class="app-bar-inner">
-        <a class="hero-left" href="/" style="text-decoration:none;color:inherit">
+        <a class="hero-left" href="/">
           <img class="hero-logo" src="/assets/logo.png" alt="IPTV 4U logo" width="40" height="40" />
           <div>
             <p class="eyebrow">IPTV 4U</p>
@@ -106,8 +118,22 @@
       </div>
     </main>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.17/hls.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
+    <!-- Pinned versions and the sha384 digest of exactly these bytes. Bumping
+         a version means recomputing its hash: if the CDN ever serves different
+         content, the browser refuses to run the script instead of trusting it.
+         crossorigin is required for SRI on a cross-origin script. -->
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.17/hls.min.js"
+      integrity="sha384-9v3HcdYrO3D+OPDTjZ40RXocgE4GtXVCd3/mCS62JsM93JXgI1afJVuwjFvsu6ni"
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"
+      integrity="sha384-Z2H/TjKWDNZA/2luGOnjLx9pcva7cK4VSWC+hZn78Kr5uG8YbMpxdz+wWXBMO6N/"
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    ></script>
     <script type="module" src="/watch.js"></script>
   </body>
 </html>

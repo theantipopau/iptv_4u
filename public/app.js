@@ -40,6 +40,7 @@ const el = {
   exportBacklogBtn: document.getElementById('exportBacklogBtn'),
   loadProjectFile: document.getElementById('loadProjectFile'),
   themeToggle: document.getElementById('themeToggle'),
+  signOutBtn: document.getElementById('signOutBtn'),
   channelFilter: document.getElementById('channelFilter'),
   tableCount: document.getElementById('tableCount'),
   progressTrack: document.getElementById('progressTrack'),
@@ -85,6 +86,19 @@ const el = {
   autoRefreshTimeZone: document.getElementById('autoRefreshTimeZone'),
   autoRefreshTimeZoneLabel: document.getElementById('autoRefreshTimeZoneLabel')
 };
+
+// ---- broken images ---------------------------------------------------
+
+// Logos come from provider playlists and TMDB, so some URLs 404. The templates
+// used to carry an inline error handler that removed the image; a strict
+// Content-Security-Policy (index.html) blocks that, so the fallback is wired
+// once here instead. Capture phase: `error` does not bubble.
+document.addEventListener('error', (event) => {
+  const img = event.target;
+  if (img instanceof HTMLImageElement && (img.classList.contains('logo-thumb') || img.classList.contains('match-thumb'))) {
+    img.remove();
+  }
+}, true);
 
 // ---- toasts ----------------------------------------------------------
 
@@ -135,14 +149,75 @@ async function readFileText(file) {
   return file.text();
 }
 
-const ADMIN_TOKEN_KEY = 'iptv4u_admin_token';
+// Older builds kept the admin token in localStorage, where any script on this
+// origin could read it. It is no longer used: the token is exchanged once for
+// an HttpOnly session cookie (see shared/admin-session.js), so drop the old
+// plaintext copy rather than leaving it behind for something else to pick up.
+const LEGACY_ADMIN_TOKEN_KEY = 'iptv4u_admin_token';
+try {
+  // A browser that already had the token trades it for a session once, so the
+  // upgrade doesn't re-prompt (or lock out an owner who no longer has it noted).
+  const legacyToken = localStorage.getItem(LEGACY_ADMIN_TOKEN_KEY);
+  localStorage.removeItem(LEGACY_ADMIN_TOKEN_KEY);
+  if (legacyToken) unlockAdminSession(legacyToken);
+} catch {
+  // storage blocked — nothing to clean up
+}
 
-function savedAdminToken() {
+// Ask the server to exchange the token for an HttpOnly cookie. The cookie then
+// rides along on every same-origin request and is invisible to this code.
+async function unlockAdminSession(token) {
   try {
-    return localStorage.getItem(ADMIN_TOKEN_KEY) || '';
+    const response = await fetch('/api/admin/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    const json = await response.json().catch(() => null);
+    if (response.ok && json && json.ok) {
+      refreshAdminState();
+      return true;
+    }
+    return false;
   } catch {
-    return '';
+    return false;
   }
+}
+
+// The session cookie is HttpOnly, so page JavaScript can neither read it nor
+// delete it. Ask the server whether this browser is signed in, and let it be
+// the one to clear the cookie on sign-out.
+async function refreshAdminState() {
+  let state = null;
+  try {
+    const response = await fetch('/api/admin/session', { cache: 'no-store' });
+    const json = await response.json();
+    if (response.ok && json.ok) state = json;
+  } catch {
+    // Offline or mid-restart: leave the control as it was rather than guessing.
+  }
+  if (el.signOutBtn) el.signOutBtn.hidden = !(state && state.configured && state.signedIn);
+  return state;
+}
+
+async function signOutAdmin() {
+  if (!el.signOutBtn) return;
+  el.signOutBtn.disabled = true;
+  try {
+    const response = await fetch('/api/admin/session', { method: 'DELETE' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    toast('Signed out of admin in this browser.', 'success');
+  } catch {
+    toast('Could not sign out — check your connection and try again.', 'error');
+  } finally {
+    el.signOutBtn.disabled = false;
+    refreshAdminState();
+  }
+}
+
+if (el.signOutBtn) {
+  el.signOutBtn.addEventListener('click', signOutAdmin);
+  refreshAdminState();
 }
 
 async function api(url, options = {}, { retried = false } = {}) {
@@ -150,7 +225,6 @@ async function api(url, options = {}, { retried = false } = {}) {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      'X-Admin-Token': savedAdminToken(),
       ...(options.headers || {})
     }
   });
@@ -162,17 +236,15 @@ async function api(url, options = {}, { retried = false } = {}) {
     throw new Error(`The server returned a non-JSON response (HTTP ${response.status}).`);
   }
   if (!response.ok || !json.ok) {
-    // Only prompts when the server has an admin token configured and this
-    // browser doesn't have it (or has a wrong one). Asked once, then remembered.
+    // The session cookie is missing, expired, or was minted from a token that
+    // has since been rotated. Ask once, exchange it, retry with the cookie.
     if (response.status === 401 && !retried) {
-      const entered = window.prompt('This server needs the admin token to save changes. It is stored in this browser only.');
+      const entered = window.prompt('This server needs the admin token to save changes. It is kept in an HttpOnly cookie, never in page storage.');
       if (entered) {
-        try {
-          localStorage.setItem(ADMIN_TOKEN_KEY, entered.trim());
-        } catch {
-          // storage blocked: the retry below will fail and show the error
-        }
-        return api(url, options, { retried: true });
+        if (await unlockAdminSession(entered.trim())) return api(url, options, { retried: true });
+        // Without this the original "needs the admin token" error is shown,
+        // which reads as if nothing had been entered.
+        json = { ...json, error: 'That admin token was not accepted.', code: 'ADMIN_TOKEN_INVALID' };
       }
     }
     // Carry the stage-specific code/details through, so callers can explain
@@ -508,7 +580,7 @@ function renderTable() {
 
     const logoSrc = (linked && linked.logoUrl) || channel.attrs?.['tvg-logo'] || '';
     const logoCell = logoSrc
-      ? `<img class="logo-thumb" src="${escapeHtml(logoSrc)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" />`
+      ? `<img class="logo-thumb" src="${escapeHtml(logoSrc)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
       : '<div class="logo-thumb logo-thumb--empty"></div>';
 
     const badges = [];
@@ -724,7 +796,7 @@ function buildMatchCard(match, channel) {
 
   const isTmdb = match.sourceType === 'tmdb';
   const thumb = match.logoUrl
-    ? `<img class="match-thumb" src="${escapeHtml(match.logoUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" />`
+    ? `<img class="match-thumb" src="${escapeHtml(match.logoUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
     : '';
 
   const guideLine = match.guideUrl ? `<div class="small">Guide: ${escapeHtml(match.guideUrl)}</div>` : '';

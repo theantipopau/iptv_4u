@@ -88,6 +88,18 @@ const el = {
   crossTabWarning: document.getElementById('crossTabWarning')
 };
 
+// A channel's logo is a provider-supplied URL and sometimes 404s. The templates
+// used to carry an inline error handler that removed the image, which a Content
+// Security Policy treats as an inline script and blocks (see watch.html), so the
+// same fallback is wired once here instead. Capture phase: `error` does not
+// bubble.
+document.addEventListener('error', (event) => {
+  const img = event.target;
+  if (img instanceof HTMLImageElement && img.classList.contains('logo-thumb') && img.closest('#channelList, #recentRow')) {
+    img.remove();
+  }
+}, true);
+
 const state = {
   slug: '',
   channels: [],
@@ -619,7 +631,7 @@ function renderChannelList() {
   el.channelList.innerHTML = filtered.map((channel) => {
     const logo = channel.attrs['tvg-logo'];
     const logoHtml = logo
-      ? `<img class="logo-thumb" src="${escapeHtml(logo)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" />`
+      ? `<img class="logo-thumb" src="${escapeHtml(logo)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
       : '<div class="logo-thumb--empty"></div>';
     const activeClass = channel.index === state.activeIndex ? ' active' : '';
     const chno = channel.attrs['tvg-chno'];
@@ -680,7 +692,7 @@ function renderRecentRow() {
   el.recentRow.innerHTML = channels.map((channel) => {
     const logo = channel.attrs['tvg-logo'];
     const logoHtml = logo
-      ? `<img class="logo-thumb" src="${escapeHtml(logo)}" alt="${escapeHtml(channel.name)}" title="${escapeHtml(channel.name)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" />`
+      ? `<img class="logo-thumb" src="${escapeHtml(logo)}" alt="${escapeHtml(channel.name)}" title="${escapeHtml(channel.name)}" loading="lazy" referrerpolicy="no-referrer" />`
       : `<div class="logo-thumb--empty" title="${escapeHtml(channel.name)}"></div>`;
     return `<span data-index="${channel.index}" tabindex="0" role="button" aria-label="Play ${escapeHtml(channel.name)}">${logoHtml}</span>`;
   }).join('');

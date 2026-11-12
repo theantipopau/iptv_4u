@@ -749,12 +749,45 @@ export async function publishFiles(store, slugInput, { m3uContent, xmlContent, o
   // renewal warning is a property of the publication *and* the saved
   // schedule, and would go stale in storage the moment a config is added.
 
-  await store.set(manifestKey(slug), manifest, { strict: true, ttlSeconds: null });
+  try {
+    await store.set(manifestKey(slug), manifest, { strict: true, ttlSeconds: null });
+  } catch (error) {
+    // The manifest write *is* the promotion: until it lands, every reader
+    // still resolves the previous version, so "nothing was published" is true
+    // here (and the raw storage error would otherwise be all the caller saw).
+    logEvent('publish.storage.write.failed', { ...stage, version, part: 'manifest', errorCode: error.code || null, error: error.message }, 'error');
+    throw publishError(
+      'Could not record the publication (storage write failed). Nothing was published; the previous version is still live.',
+      'PUBLISH_STORAGE_WRITE_FAILED',
+      503
+    );
+  }
+
+  // Past this point the publication is live: the manifest names this version
+  // and readers resolve through it. Everything below is derived from that
+  // validated pair — the legacy copies, the protected overrides, the plan —
+  // so a failure there must not be reported as "nothing was published". It
+  // wasn't, a retry would only rewrite what is already serving, and the piece
+  // that failed still matters (to old readers, or to the next scheduled
+  // refresh), so it is reported as a warning on the successful response.
+  const derivedWriteFailed = (code, message, part, error) => {
+    logEvent('publish.derivedWrite.failed', { ...stage, version, part, errorCode: error.code || null, error: error.message }, 'warn');
+    publicationWarnings.push({ code, message });
+  };
 
   // 4. Legacy/serving keys, kept in step for existing readers and for any
   //    other code path that still reads hosted:<slug>:m3u|xml directly.
   for (const candidate of candidates) {
-    await store.set(legacyKey(slug, candidate.kind), candidate.content, { strict: true, ttlSeconds: null });
+    try {
+      await store.set(legacyKey(slug, candidate.kind), candidate.content, { strict: true, ttlSeconds: null });
+    } catch (error) {
+      derivedWriteFailed(
+        'PUBLISH_COMPAT_COPY_FAILED',
+        `Published, but the legacy copy of the ${candidate.kind === 'playlist' ? 'playlist' : 'guide'} could not be stored. Players are served the new version through the manifest, so the publication itself is fine.`,
+        `${candidate.kind}-compat`,
+        error
+      );
+    }
   }
 
   // Whatever's manually confirmed at publish time becomes the full set of
@@ -764,13 +797,31 @@ export async function publishFiles(store, slugInput, { m3uContent, xmlContent, o
   // deliberate value: it clears any previously-saved overrides rather than
   // leaving stale ones from an earlier publish in place.
   if (overrides && typeof overrides === 'object') {
-    await store.set(`overrides:${slug}`, overrides, { strict: true, ttlSeconds: null });
+    try {
+      await store.set(`overrides:${slug}`, overrides, { strict: true, ttlSeconds: null });
+    } catch (error) {
+      derivedWriteFailed(
+        'PUBLISH_OVERRIDES_NOT_SAVED',
+        'Published, but the manual channel overrides could not be saved. Auto-refresh keeps using the previous override set until this slug is published again.',
+        'overrides',
+        error
+      );
+    }
   }
 
   // Every channel's current match, so a scheduled refresh can renew the
   // schedule from the same sources without re-searching (see runAutoRefresh).
   if (plan && typeof plan === 'object') {
-    await store.set(planKey(slug), plan, { strict: true, ttlSeconds: null });
+    try {
+      await store.set(planKey(slug), plan, { strict: true, ttlSeconds: null });
+    } catch (error) {
+      derivedWriteFailed(
+        'PUBLISH_PLAN_NOT_SAVED',
+        'Published, but the channel plan could not be saved. Scheduled auto-refresh needs a saved plan, so it will keep failing until this slug is published again.',
+        'plan',
+        error
+      );
+    }
   }
 
   // Keep the active and previous versions only. Each publish writes a full
@@ -795,8 +846,19 @@ export async function publishFiles(store, slugInput, { m3uContent, xmlContent, o
   // files themselves are fine) so the UI can say so at the moment the user is
   // looking at the result, which is the only moment they can still act on it.
   if (guideAnalysis && guideAnalysis.currentOrFutureProgrammes > 0) {
-    const refreshConfig = await store.getStale(refreshConfigKey(slug));
-    if (!refreshConfig?.intervalKey) {
+    let refreshConfig = null;
+    let refreshConfigKnown = false;
+    try {
+      refreshConfig = await store.getStale(refreshConfigKey(slug));
+      refreshConfigKnown = true;
+    } catch (error) {
+      // The publication already happened; a failed read here only means the
+      // renewal hint can't be computed. It must not turn a completed publish
+      // into a reported failure, and treating it as "no config" would warn
+      // about an expiry that may already be scheduled.
+      logEvent('publish.refreshConfig.read.failed', { ...stage, errorCode: error.code || null, error: error.message }, 'warn');
+    }
+    if (refreshConfigKnown && !refreshConfig?.intervalKey) {
       publicationWarnings.push({
         code: 'GUIDE_WILL_EXPIRE_WITHOUT_REFRESH',
         message: 'This guide appears healthy but will eventually expire unless auto-refresh is enabled.',
@@ -1354,6 +1416,28 @@ export function describeRefreshSchedule(config, now = Date.now()) {
 // for the next tick is not reported as a failure.
 const AUTO_REFRESH_OVERDUE_GRACE_MS = 2 * 60 * 60 * 1000;
 
+// A fixed-time ("daily at 03:00") config has no intervalKey, so
+// describeRefreshSchedule reports intervalMs: null for it. Adding that null to
+// the grace period treated it as zero, which made every daily-at config
+// "overdue" two hours after each run — most of the day, every day, and so a
+// permanent false AUTO_REFRESH_OVERDUE / SCHEDULER_NOT_OBSERVED. The expected
+// gap between two runs is one local day; the calendar-day boundary itself is
+// already what isRefreshDue uses, so this only measures lateness.
+const DAILY_AT_PERIOD_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The gap between two expected runs of an enabled schedule. Deliberately null,
+ * never zero, when the mode has no such gap: `null + graceMs` silently becomes
+ * `graceMs`, which is how a once-a-day schedule came to be judged against a
+ * two-hour one.
+ * @param {{mode?: string, intervalMs?: number|null}} schedule
+ * @returns {number|null}
+ */
+function expectedRunGapMs(schedule) {
+  if (schedule?.mode === 'daily-at') return DAILY_AT_PERIOD_MS;
+  return Number.isFinite(schedule?.intervalMs) ? schedule.intervalMs : null;
+}
+
 /**
  * Is an enabled config past due by more than the scheduler's tick, i.e. the
  * refresh that should have happened hasn't? This is the signal that separates
@@ -1366,10 +1450,18 @@ const AUTO_REFRESH_OVERDUE_GRACE_MS = 2 * 60 * 60 * 1000;
  */
 function isAutoRefreshOverdue(config, schedule, now) {
   if (!config || !schedule?.enabled) return false;
-  if (schedule.lastRunAt) return now - schedule.lastRunAt > schedule.intervalMs + AUTO_REFRESH_OVERDUE_GRACE_MS;
-  // Enabled but never run at all: after the grace period, the tick is not
-  // reaching this config (newly saved configs are due immediately by design).
-  return config.createdAt ? now - config.createdAt > AUTO_REFRESH_OVERDUE_GRACE_MS : false;
+  const gapMs = expectedRunGapMs(schedule);
+  if (schedule.lastRunAt) {
+    return Number.isFinite(gapMs) && now - schedule.lastRunAt > gapMs + AUTO_REFRESH_OVERDUE_GRACE_MS;
+  }
+  if (!config.createdAt) return false;
+  // Enabled but never run at all. An interval config is due the moment it
+  // exists, so one missed tick is already evidence. A fixed-time config's first
+  // run can be up to a day away (saving "daily at 3am" at lunchtime means
+  // waiting until tomorrow morning), so nothing is claimed until a whole period
+  // has passed without a run.
+  const firstRunWindowMs = (schedule.mode === 'daily-at' ? DAILY_AT_PERIOD_MS : 0) + AUTO_REFRESH_OVERDUE_GRACE_MS;
+  return now - config.createdAt > firstRunWindowMs;
 }
 
 /**

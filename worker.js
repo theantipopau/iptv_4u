@@ -32,6 +32,7 @@ import {
 } from './shared/epg-service.js';
 import { buildHostedResponse } from './shared/serve.js';
 import { assertAdmin } from './shared/core.js';
+import { assertAdminAccess, checkAdminAccess, clearAdminSessionCookie, createAdminSession } from './shared/admin-session.js';
 import { createKvCache, createHostedKvStore } from './shared/kv-cache.js';
 import { logEvent } from './shared/log.js';
 
@@ -47,6 +48,12 @@ function ok(result) {
   return Response.json({ ok: true, ...result });
 }
 
+// Session status is per-browser and must never be cached by an edge or a
+// service worker.
+function noStore(result) {
+  return Response.json({ ok: true, ...result }, { headers: { 'Cache-Control': 'no-store' } });
+}
+
 function fail(error) {
   logEvent('api.request.failed', { errorCode: error.code || 'INTERNAL_ERROR', error: error.message }, 'error');
   return Response.json(
@@ -58,6 +65,17 @@ function fail(error) {
 function fromHosted(result) {
   const headers = new Headers(result.headers);
   return new Response(result.body, { status: result.status, headers });
+}
+
+// Writes accept either the X-Admin-Token header (curl/scripts) or the HttpOnly
+// session cookie the admin page gets from POST /api/admin/session. See
+// shared/admin-session.js for why the browser no longer holds the token.
+async function requireAdmin(request, env) {
+  await assertAdminAccess({
+    headerToken: request.headers.get('X-Admin-Token'),
+    cookieHeader: request.headers.get('cookie'),
+    adminToken: env.ADMIN_TOKEN
+  });
 }
 
 // Hostnames this Worker answers on (wrangler.toml [vars]). An auto-refresh
@@ -89,11 +107,42 @@ export default {
     const hostedStore = createHostedKvStore(env.HOSTED_FILES);
 
     try {
+      if (pathname === '/api/admin/session' && request.method === 'GET') {
+        if (!env.ADMIN_TOKEN) return noStore({ configured: false, signedIn: false });
+        const access = await checkAdminAccess({
+          cookieHeader: request.headers.get('cookie'),
+          adminToken: env.ADMIN_TOKEN
+        });
+        return noStore({ configured: true, signedIn: access.ok && access.via === 'session' });
+      }
+
+      if (pathname === '/api/admin/session' && request.method === 'DELETE') {
+        // HttpOnly, so the page can't clear it itself; no credentials needed
+        // because expiring your own cookie is always allowed.
+        const cleared = clearAdminSessionCookie({ secure: url.protocol === 'https:' });
+        return Response.json(
+          { ok: true },
+          { headers: { 'Set-Cookie': cleared.cookie, 'Cache-Control': 'no-store' } }
+        );
+      }
+
+      if (pathname === '/api/admin/session' && request.method === 'POST') {
+        const body = await readJson(request);
+        // No secret configured: writes are open, so there is nothing to unlock.
+        if (!env.ADMIN_TOKEN) return ok({ configured: false });
+        assertAdmin(body.token, env.ADMIN_TOKEN);
+        const session = await createAdminSession(env.ADMIN_TOKEN, { secure: url.protocol === 'https:' });
+        return Response.json(
+          { ok: true, configured: true, expiresAt: new Date(session.expiresAt).toISOString() },
+          { headers: { 'Set-Cookie': session.cookie, 'Cache-Control': 'no-store' } }
+        );
+      }
+
       if (pathname === '/api/discover-sources' && request.method === 'GET') {
         // Forcing a refresh re-fetches every worker host: that's the expensive
         // path, so only the owner can trigger it.
         const force = url.searchParams.get('refresh') === '1';
-        if (force) assertAdmin(request.headers.get('X-Admin-Token'), env.ADMIN_TOKEN);
+        if (force) await requireAdmin(request, env);
         return ok(await discoverSources(cache, force));
       }
 
@@ -122,13 +171,13 @@ export default {
       }
 
       if (pathname === '/api/publish' && request.method === 'POST') {
-        assertAdmin(request.headers.get('X-Admin-Token'), env.ADMIN_TOKEN);
+        await requireAdmin(request, env);
         const body = await readJson(request);
         return ok(await publishFiles(hostedStore, body.slug, body));
       }
 
       if (pathname === '/api/refresh-config' && request.method === 'POST') {
-        assertAdmin(request.headers.get('X-Admin-Token'), env.ADMIN_TOKEN);
+        await requireAdmin(request, env);
         const body = await readJson(request);
         return ok({ config: await saveRefreshConfig(hostedStore, body) });
       }
@@ -139,7 +188,7 @@ export default {
       }
 
       if (pathname === '/api/refresh-now' && request.method === 'POST') {
-        assertAdmin(request.headers.get('X-Admin-Token'), env.ADMIN_TOKEN);
+        await requireAdmin(request, env);
         const body = await readJson(request);
         const config = await getRefreshConfig(hostedStore, body.slug);
         if (!config) {
@@ -175,7 +224,7 @@ export default {
       }
 
       if (pathname === '/api/upload-logo' && request.method === 'POST') {
-        assertAdmin(request.headers.get('X-Admin-Token'), env.ADMIN_TOKEN);
+        await requireAdmin(request, env);
         return ok(await uploadLogoAsset(hostedStore, await readJson(request)));
       }
 

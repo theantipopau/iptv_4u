@@ -93,12 +93,14 @@ npm start
 
 Then open http://localhost:3000 — no XMLTV file needed to start, just an M3U.
 
-**Tests**: `npm test` (Node's built-in `node:test`/`assert` — no test framework dependency):
+**Tests**: `npm test` (Node's built-in `node:test`/`assert` — no test framework dependency). `.github/workflows/ci.yml` runs the same suite on every push and pull request, because the Cloudflare build deploys straight from this repo and nothing else checks a commit before it goes live:
 
 - `tests/watch-core.test.mjs` — `public/watch-core.js`: M3U/XMLTV parsing, now/next selection, HTTPS-upgrade construction, URL redaction, error classification.
+- `tests/page-security.test.mjs` — the Content-Security-Policy on both `index.html` and `watch.html`, and the Subresource Integrity hashes on the two CDN player scripts.
 - `tests/alias-registry.test.mjs`, `tests/channel-overrides.test.mjs` — the curated alias registry and the protected-override storage contract.
 - `tests/epg-integrity.test.mjs` — the identifier contract, the publication gate, and the regression tests for the "playlist loads, guide shows nothing" outage (including a guide that was healthy when published and is read again after it ages out).
 - `tests/hosted-storage.test.mjs` — cache adapters, versioned publication, read-after-write verification, rollback and backwards compatibility with pre-manifest publications.
+- `tests/admin-session.test.mjs` — the HttpOnly admin session: cookie signing, expiry, tampering and rotation, the login route, and that `X-Admin-Token` still works for scripts.
 - `tests/routes.test.mjs` — the real Express app: content types, status codes, `HEAD`, ETag/cache headers, health endpoint and last-known-good fallback.
 - `tests/guide-renewal.test.mjs`, `tests/refresh-self-source.test.mjs` — plan-based renewal, the streaming guide filter, the one-request Publish build, 24/7 schedule generation and titles, version pruning, and the masked public health report.
 - `tests/auto-refresh.test.mjs`, `tests/guide-freshness.test.mjs`, `tests/local-scheduler.test.mjs`, `tests/publish-onboarding.test.mjs` — scheduling, failure retries and freshness reporting.
@@ -145,6 +147,9 @@ Every route below is implemented once in `shared/epg-service.js` and exposed ide
 | `POST /api/apply-identity` | `{ baseXml, channelId, channelName?, logoUrl?, synthesize?, title?, overview?, days? }` | `{ ok, mergedXml, addedChannelId, addedProgrammes }` |
 | `POST /api/export-m3u` | `{ channels, links }` | `{ ok, m3u }` |
 | `POST /api/build-from-plan` | `{ m3uText, plan, overrides?, baseXml? }` — `plan` is `{ [channelName]: link \| { channelId: null } }` for every channel | `{ ok, m3u, xml, counts }` — the final playlist and guide in one request, built by the same code as the scheduled refresh (guides streamed and filtered to your channels; no searching). This is what **Publish** and **Export** use. |
+| `POST /api/admin/session` | `{ token }` | `{ ok, configured, expiresAt }` plus a `Set-Cookie` (`HttpOnly`, `SameSite=Strict`, 30 days) — exchanges the admin token for the cookie the admin page uses. `401` + `ADMIN_TOKEN_INVALID` for a wrong token; `{ configured: false }` when no `ADMIN_TOKEN` is set. |
+| `GET /api/admin/session` | — | `{ ok, configured, signedIn }` — whether this browser holds a valid session cookie. The cookie is HttpOnly, so the page has to ask; this is what shows/hides the header's **Sign out** button. `Cache-Control: no-store`. No credentials needed. |
+| `DELETE /api/admin/session` | — | `{ ok }` plus a `Set-Cookie` that expires the session cookie (`Max-Age=0`, with the same `Path`/`HttpOnly`/`SameSite=Strict` it was set with, so the browser actually removes it). **Sign out** calls this. No credentials needed — an expired session is exactly when you most want to clear it. |
 | `POST /api/publish` | `{ slug, m3uContent?, xmlContent?, overrides?, plan? }` (at least one content field) — `overrides` holds every manual link and `plan` every channel's match; see **Keeping a published playlist fresh automatically** | `{ ok, slug }` — then served at `/iptv/<slug>.m3u` and/or `/epg/<slug>.xml` |
 | `POST /api/refresh-config` | `{ slug, m3uUrl, customGuideUrl?, intervalKey? }` (`intervalKey`: `"6h"`, `"12h"`, `"24h"`, or `null`/omitted for off) | `{ ok, config }` |
 | `GET /api/refresh-config/:slug` | — | `{ ok, config }` (`config: null` if nothing saved for that slug) |
@@ -175,7 +180,7 @@ The slug is remembered across sessions (autosave, and a saved/loaded project fil
 
 Publishing needs somewhere to persist the files: locally that's `.hosted-files/` on disk; on Cloudflare it's the `HOSTED_FILES` KV namespace (below).
 
-**Changing things needs an admin token.** Publish, saving auto-refresh settings, "Refresh now", logo uploads and forcing a full re-discovery of guide sources (`/api/discover-sources?refresh=1`) are protected. Set a secret named `ADMIN_TOKEN` and the app will ask for it once in each browser (it is then remembered there only). Locally, put `ADMIN_TOKEN=...` in `.env`. On Cloudflare run `npx wrangler secret put ADMIN_TOKEN`. While no token is set, the writes are open, exactly as before, so nothing changes until you set one. Playlist and guide URLs stay public either way. Setting the secret is a separate step from deploying: until you run it, anyone who finds your slug can still publish over it.
+**Changing things needs an admin token.** Publish, saving auto-refresh settings, "Refresh now", logo uploads and forcing a full re-discovery of guide sources (`/api/discover-sources?refresh=1`) are protected. Set a secret named `ADMIN_TOKEN` and the app will ask for it once in each browser, then exchange it for an HttpOnly session cookie (30 days) — the token itself is never written to `localStorage` or any other page-readable storage, and because the cookie is signed with the token, rotating the secret invalidates every existing session. Once a session exists the header shows a **Sign out** button, which asks the server to expire that cookie — it affects only the browser you click it in, and the next write there prompts for the token again. Scripts that cannot hold a cookie (curl, cron) can still send the `X-Admin-Token` header directly. Locally, put `ADMIN_TOKEN=...` in `.env`. On Cloudflare run `npx wrangler secret put ADMIN_TOKEN`. While no token is set, the writes are open, exactly as before, so nothing changes until you set one. Playlist and guide URLs stay public either way. Setting the secret is a separate step from deploying: until you run it, anyone who finds your slug can still publish over it. Both pages also ship a Content-Security-Policy (`<meta>` in `index.html` and `watch.html`): the admin page executes only its own scripts and sends network requests only to its own origin, while `/watch` has a looser policy because its player libraries come from two pinned, integrity-checked CDNs (see **Watching in the browser**).
 
 ### TiViMate setup (and refreshing it)
 
@@ -214,6 +219,15 @@ Published with warnings (visible in the UI and in `/api/health/epg/<slug>`):
 - a guide whose schedule runs out within 12 hours
 - programme count falling by more than half against the previous publication
 - any programme referencing a channel id the guide doesn't declare (beyond a small tolerance)
+
+A publish that has already been promoted is never reported as failed. The
+manifest write is the point of no return: once it lands, the new pair is what
+every reader resolves, so a failure in the writes derived from it — the legacy
+copies, the saved plan, the protected overrides — comes back as a warning on
+the success response (`PUBLISH_COMPAT_COPY_FAILED`, `PUBLISH_PLAN_NOT_SAVED`,
+`PUBLISH_OVERRIDES_NOT_SAVED`) naming the piece that didn't save. Only a
+failure before the manifest is written says "nothing was published", because
+only then is it true.
 
 ### How a publication is stored
 
@@ -351,10 +365,14 @@ nothing ever executing. Three things make it visible instead:
 
 "Overdue" is measured, not guessed: a run that is *attempted* — successfully or
 not — always advances `lastRunAt`, so a config that is past its interval plus a
-two-hour grace period without `lastRunAt` moving has not been executed. A config
-enabled moments ago is deliberately reported as `null`/no claim rather than as a
-failure, and a stray `lastRunAt` from a manual **Refresh Now** is not enough to
-call the scheduler healthy (which is why `overdue` overrides it).
+two-hour grace period without `lastRunAt` moving has not been executed. A
+fixed-time config has no interval, so the same check measures it against one
+local day instead — otherwise a guide that renews daily at 03:00 would be
+called overdue for the other 22 hours. A config enabled moments ago is
+deliberately reported as `null`/no claim rather than as a failure (a daily-at
+config gets a whole day, since its first run can be that far away), and a stray
+`lastRunAt` from a manual **Refresh Now** is not enough to call the scheduler
+healthy (which is why `overdue` overrides it).
 
 ### "Why isn't my guide refreshing?" — check in this order
 
@@ -467,9 +485,11 @@ Logic that doesn't need a DOM (M3U/guide parsing, favourites/recents, error clas
 ### Playback pipeline
 
 1. **Native HLS** (Safari/iOS) for a `.m3u8` URL, when the browser can play it without help.
-2. **[hls.js](https://github.com/video-dev/hls.js)** (pinned version, loaded from cdnjs) for `.m3u8` elsewhere — Media Source Extensions in the browser, not a native decoder.
+2. **[hls.js](https://github.com/video-dev/hls.js)** (pinned version, loaded from cdnjs, integrity-checked) for `.m3u8` elsewhere — Media Source Extensions in the browser, not a native decoder.
 3. **[mpegts.js](https://github.com/xqq/mpegts.js)** for a raw, continuous MPEG-TS stream — the common case for most IPTV playlists (no `.m3u8` manifest at all), which no browser decodes natively.
 4. A clear, specific explanation when none of the above can play the stream — never a silent failure, and never a hand-off to an external app as part of the normal flow.
+
+Both third-party libraries are pinned to an exact version and carry a `sha384` Subresource Integrity hash (with `crossorigin="anonymous"`, which SRI requires), so a CDN response that isn't byte-for-byte the reviewed build is refused rather than executed — the failure mode that matters on the same origin where the admin session cookie lives. `/watch` additionally declares a Content-Security-Policy in `watch.html`: scripts may only come from this origin and those two CDNs (no inline handlers, no `eval`, no wildcard), while `img-src`/`media-src`/`connect-src` stay deliberately broad because a playlist names arbitrary provider hosts the browser must reach directly. It's a `<meta>` policy rather than a response header so the Express dev server and Cloudflare's static assets enforce the same bytes from one source; `tests/page-security.test.mjs` fails if a script is added without a hash, a CDN without a matching policy entry, or either page regains an inline handler.
 
 Every playback attempt gets a monotonically increasing attempt id; every async callback (hls.js events, mpegts.js events, native `<video>` events, the load watchdog) checks it's still current before touching any UI state, so a slow failure from a channel you've already switched away from can't overwrite what you're watching now. Confirmed via rapid-switch testing, not just by inspection.
 

@@ -2,6 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- This page runs only its own scripts and talks only to this origin's
+         /api/* — its sole third-party requests are the Google Fonts files and
+         images that markup or API results name (TMDB posters, provider logos).
+         No inline handlers or eval are needed, which is what lets script-src
+         and connect-src stay at 'self'. The player page needs a looser policy
+         because its libraries come from two CDNs; see watch.html. A <meta>
+         policy rather than a response header so the Express dev server and
+         Cloudflare's static assets enforce the same bytes from one source. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: http: https:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>IPTV 4U EPG Linker</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -40,6 +52,10 @@
           </div>
           <button id="guideStatus" class="guide-status" type="button" hidden><span class="guide-status__dot" aria-hidden="true"></span><span class="guide-status__text"></span></button>
           <a class="btn btn--icon watch-link" href="/watch" title="Open the live viewer" aria-label="Open the live viewer">▶ <span>Watch</span></a>
+          <!-- Only shown when this browser actually holds a session cookie;
+               the cookie is HttpOnly, so app.js asks the server (GET
+               /api/admin/session) rather than trying to read it. -->
+          <button id="signOutBtn" class="btn btn--icon watch-link" type="button" title="Sign out of admin in this browser" hidden>⏻ <span>Sign out</span></button>
           <button id="themeToggle" class="theme-toggle" type="button" title="Toggle dark mode" aria-label="Toggle dark mode">🌓</button>
         </div>
       </div>
